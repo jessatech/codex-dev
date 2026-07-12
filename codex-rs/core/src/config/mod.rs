@@ -1158,6 +1158,9 @@ pub struct MultiAgentV2Config {
     /// role's pinned value is rejected before a child is created, instead of silently substituting
     /// the role's value.
     pub reject_route_substitution: bool,
+    /// Maximum number of sub-agents spawned under one root thread (lifetime, not concurrent).
+    /// `None` leaves spawns unbounded (subject to the concurrency and depth limits).
+    pub max_total_spawns_per_root: Option<usize>,
 }
 
 impl MultiAgentV2Config {
@@ -1182,6 +1185,7 @@ impl MultiAgentV2Config {
             non_code_mode_only: true,
             require_explicit_agent_type: false,
             reject_route_substitution: false,
+            max_total_spawns_per_root: None,
         }
     }
 }
@@ -2553,6 +2557,9 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     let reject_route_substitution = base
         .and_then(|config| config.reject_route_substitution)
         .unwrap_or(default.reject_route_substitution);
+    let max_total_spawns_per_root = base
+        .and_then(|config| config.max_total_spawns_per_root)
+        .or(default.max_total_spawns_per_root);
 
     MultiAgentV2Config {
         max_concurrent_threads_per_session,
@@ -2568,6 +2575,7 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         non_code_mode_only,
         require_explicit_agent_type,
         reject_route_substitution,
+        max_total_spawns_per_root,
     }
 }
 

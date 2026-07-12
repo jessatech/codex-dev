@@ -630,6 +630,56 @@ async fn multi_agent_v2_strict_routing_rejects_model_conflicting_with_role_pin()
 }
 
 #[tokio::test]
+async fn multi_agent_v2_spawn_budget_rejects_when_root_cap_reached() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.max_total_spawns_per_root = Some(1);
+    let turn = Arc::new(TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    });
+    let session = Arc::new(session);
+
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::clone(&session),
+            Arc::clone(&turn),
+            "spawn_agent",
+            function_payload(json!({ "message": "first", "task_name": "first" })),
+        ))
+        .await
+        .expect("first spawn should succeed within budget");
+
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::clone(&session),
+            Arc::clone(&turn),
+            "spawn_agent",
+            function_payload(json!({ "message": "second", "task_name": "second" })),
+        ))
+        .await
+        .err()
+        .expect("second spawn should exceed the per-root budget");
+
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("spawn budget reached")),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn spawn_agent_service_tier_override_validates_the_effective_child_model() {
     #[derive(Debug, Deserialize)]
     struct SpawnAgentResult {

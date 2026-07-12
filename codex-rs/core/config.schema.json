@@ -1742,6 +1742,12 @@
           "minimum": 1.0,
           "type": "integer"
         },
+        "max_total_spawns_per_root": {
+          "description": "Maximum number of sub-agents that may be spawned under one root thread (lifetime, not concurrent). When set, a spawn beyond this budget is rejected before a child is created.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
         "max_wait_timeout_ms": {
           "format": "int64",
           "maximum": 3600000.0,

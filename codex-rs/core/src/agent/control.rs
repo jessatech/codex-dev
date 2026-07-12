@@ -43,6 +43,8 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use tokio::sync::watch;
 use tracing::warn;
 
@@ -105,6 +107,10 @@ pub(crate) struct AgentControl {
     agent_execution_limiter: Arc<AgentExecutionLimiter>,
     /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
     rollout_budget: Arc<RolloutBudget>,
+    /// Lifetime count of sub-agents spawned under this root via the multi-agent spawn tool.
+    /// Shared (never decremented) so `max_total_spawns_per_root` is a per-root budget rather than a
+    /// concurrency limit.
+    spawn_budget_used: Arc<AtomicUsize>,
 }
 
 impl AgentControl {
@@ -135,6 +141,16 @@ impl AgentControl {
 
     pub(crate) fn rollout_budget(&self) -> &RolloutBudget {
         self.rollout_budget.as_ref()
+    }
+
+    /// Lifetime number of sub-agents spawned under this root via the spawn tool.
+    pub(crate) fn spawns_used(&self) -> usize {
+        self.spawn_budget_used.load(Ordering::Acquire)
+    }
+
+    /// Records a successful spawn against the per-root budget. Never decremented.
+    pub(crate) fn record_spawn(&self) {
+        self.spawn_budget_used.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Send rich user input items to an existing agent thread.

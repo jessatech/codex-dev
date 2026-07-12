@@ -678,6 +678,7 @@ non_code_mode_only = true
             non_code_mode_only: Some(true),
             require_explicit_agent_type: None,
             reject_route_substitution: None,
+            max_total_spawns_per_root: None,
         }))
     );
 }

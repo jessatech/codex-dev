@@ -141,12 +141,21 @@ config-layer rebuild internals), so it never false-rejects a role that doesn't p
 - Rebase risk: medium.
 - **Process note:** touching `features/` requires running the `codex-features` tests, not just `codex-core`.
 
-### C5c — budget circuit breakers — _planned, provisional_ — deliverable 8
-`[agents.budget]` caps (per-root total-spawn cap, per-model/write concurrency, depth) — needs a per-root
-spawn counter (state on `AgentControl`); plus optional route preflight/dry-run. **Reconcile names/defaults
-with `agent-swarm-orchestration-lessons.md`.**
-- Files: `config/`, `features/`, `core/src/agent/`.
-- Rebase risk: medium (additive config + new module).
+### C5c — budget: per-root total-spawn cap — _validated, ready to commit_ — deliverable 8
+Adds `features.multi_agent_v2.max_total_spawns_per_root` (default **None** = unbounded). A shared
+`Arc<AtomicUsize>` on `AgentControl` (Arc-shared across all of a root's sibling controls, never
+decremented) counts successful V2 `spawn_agent` spawns; the handler checks it before creating a child and
+rejects with a clear message once the budget is reached. Chosen over threading a parameter through the
+concurrency-critical `reserve_spawn_slot`/`commit` reservation flow (lower risk).
+- Scope note: counts **model-driven `spawn_agent` fan-out** (the budget's purpose), not forks/resumes; a
+  per-model / write-scope concurrency cap and route preflight remain for a follow-up (C5d).
+- Files:
+  - `features/src/feature_configs.rs` (field) + `features/src/tests.rs` (initializer).
+  - `core/src/config/mod.rs` (field + resolver); `core/config.schema.json` (regenerated).
+  - `core/src/agent/control.rs` — `spawn_budget_used` counter + `spawns_used()`/`record_spawn()`.
+  - `core/src/tools/handlers/multi_agents_v2/spawn.rs` — pre-spawn budget gate + `record_spawn()` on success.
+  - `core/src/tools/handlers/multi_agents_tests.rs` — spawn-twice budget test.
+- Rebase risk: low–medium (additive; `AgentControl` is central but the change is a new field + two methods).
 
 ---
 

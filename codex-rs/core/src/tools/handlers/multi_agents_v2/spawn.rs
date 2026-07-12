@@ -97,6 +97,15 @@ async fn handle_spawn_agent(
         }
     }
 
+    if let Some(cap) = turn.config.multi_agent_v2.max_total_spawns_per_root
+        && session.services.agent_control.spawns_used() >= cap
+    {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "spawn budget reached: this root has already spawned {cap} agent(s) \
+             (features.multi_agent_v2.max_total_spawns_per_root)"
+        )));
+    }
+
     let message = message_content(args.message)?;
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
@@ -196,6 +205,7 @@ async fn handle_spawn_agent(
     .await
     .map_err(collab_spawn_error)?;
     let new_thread_id = spawned_agent.thread_id;
+    session.services.agent_control.record_spawn();
     let agent_snapshot = session
         .services
         .agent_control
