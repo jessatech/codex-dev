@@ -189,6 +189,14 @@ struct SpawnAgentArgs {
 }
 
 impl SpawnAgentArgs {
+    /// Resolves the requested context-fork mode.
+    ///
+    /// An explicit `fork_turns` is honored literally: `none` => fresh child, `all` => full
+    /// history, positive integer => partial history. When `fork_turns` is omitted or blank the
+    /// default is intent-aware: a spawn that explicitly requests a role, model, or reasoning
+    /// effort resolves to a fresh child (so those overrides are honored instead of being rejected
+    /// by `reject_full_fork_spawn_overrides`), while a spawn with no routing override keeps the
+    /// inherited full-history default.
     fn fork_mode(&self) -> Result<Option<SpawnAgentForkMode>, FunctionCallError> {
         if self.fork_context.is_some() {
             return Err(FunctionCallError::RespondToModel(
@@ -196,12 +204,28 @@ impl SpawnAgentArgs {
             ));
         }
 
-        let fork_turns = self
+        let explicit_fork_turns = self
             .fork_turns
             .as_deref()
             .map(str::trim)
-            .filter(|fork_turns| !fork_turns.is_empty())
-            .unwrap_or("all");
+            .filter(|fork_turns| !fork_turns.is_empty());
+
+        let Some(fork_turns) = explicit_fork_turns else {
+            let non_blank = |value: &Option<String>| {
+                value
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+            };
+            let has_routing_override = non_blank(&self.agent_type)
+                || non_blank(&self.model)
+                || self.reasoning_effort.is_some();
+            return Ok(if has_routing_override {
+                None
+            } else {
+                Some(SpawnAgentForkMode::FullHistory)
+            });
+        };
 
         if fork_turns.eq_ignore_ascii_case("none") {
             return Ok(None);
@@ -254,3 +278,7 @@ impl ToolOutput for SpawnAgentResult {
         tool_output_code_mode_result(self, "spawn_agent")
     }
 }
+
+#[cfg(test)]
+#[path = "spawn_tests.rs"]
+mod spawn_tests;
