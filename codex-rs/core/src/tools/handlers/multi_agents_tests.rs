@@ -542,6 +542,48 @@ async fn multi_agent_v2_unhidden_spawn_result_reports_resolved_route_with_proven
 }
 
 #[tokio::test]
+async fn multi_agent_v2_strict_routing_rejects_spawn_without_agent_type() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.require_explicit_agent_type = true;
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
+
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "unrouted"
+            })),
+        ))
+        .await
+        .err()
+        .expect("strict routing should reject a spawn without agent_type");
+
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("explicit agent_type")),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn spawn_agent_service_tier_override_validates_the_effective_child_model() {
     #[derive(Debug, Deserialize)]
     struct SpawnAgentResult {

@@ -61,6 +61,14 @@ async fn handle_spawn_agent(
         .map(str::trim)
         .filter(|role| !role.is_empty());
 
+    if role_name.is_none() && turn.config.multi_agent_v2.require_explicit_agent_type {
+        return Err(FunctionCallError::RespondToModel(
+            "strict routing requires an explicit agent_type; specify a role instead of relying on \
+             the inherited default"
+                .to_string(),
+        ));
+    }
+
     let message = message_content(args.message)?;
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);

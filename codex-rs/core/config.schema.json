@@ -1760,6 +1760,10 @@
         "non_code_mode_only": {
           "type": "boolean"
         },
+        "require_explicit_agent_type": {
+          "description": "When true, `spawn_agent` must specify an explicit `agent_type`; an omitted role is rejected before a child thread is created.",
+          "type": "boolean"
+        },
         "root_agent_usage_hint_text": {
           "type": "string"
         },

@@ -100,15 +100,38 @@ Persist the resolved route in rollout/session metadata so resumed sessions/UIs d
 - Files: `protocol/`, `rollout/`, `state/`, `core/src/agent/`.
 - Rebase risk: **high** — protocol/rollout are churn hotspots; version the persisted shape.
 
-### C4 — surface resolved route (TUI/CLI/logs) — _planned_ — deliverable 6
-Show `Role · Model · Effort · Fork mode · Permission profile` per child; provenance in detail view.
-- Files: `tui/`, `app-server/`.
-- Rebase risk: high (`tui/src/chatwidget.rs` is a hotspot — add new modules, don't grow it).
+### C4 — surface resolved route (TUI) — _deferred_ — deliverable 6
+Investigation finding: the rich "Spawned" card (role · model · effort) is emitted only by the **V1**
+spawn path (`multi_agents/spawn.rs` → `CollabAgentSpawnBegin`/`CollabAgentToolCall`). A **V2** spawn
+(the configured surface) emits only `SubAgentActivity` → the sparse "Started `{agent_path}`" cell,
+which has no route fields. Every sub-agent datum the TUI shows crosses the app-server `ThreadItem`
+boundary (TS-exported), so surfacing the route for V2 requires threading it through
+`SubAgentActivityItem` (protocol + app-server schema regen + TUI + snapshots). Deferred in favor of C5
+(additive, higher value); the orchestrator already sees the resolved route + warnings via C2's
+un-hidden tool output.
+- Files (when done): `protocol/src/items.rs`, `app-server-protocol/`, `core/.../spawn.rs`, `tui/src/multi_agents.rs`, snapshots.
+- Rebase risk: high (protocol + TUI hotspots).
 
-### C5 — strict routing + budget circuit breakers (Phase 2, feature-flagged) — _planned, provisional_ — deliverable 8
-`[agents.routing]` strict mode + `[agents.budget]` caps (preflight/dry-run, per-root spawn cap, per-model/write concurrency, depth, allowlist). **Names/defaults must reconcile with Jessica's research doc.**
+### C5a — strict routing: require explicit agent_type — _validated, ready to commit_ — deliverable 8
+First strict-mode slice, realizing the research doc's "no child model by inheritance in strict mode."
+Adds `features.multi_agent_v2.require_explicit_agent_type` (default **false**, opt-in). When enabled, a
+`spawn_agent` with no `agent_type` is rejected **before** a child thread is created — forcing an
+explicit role instead of a generic inherited child. Default behavior unchanged.
+- Files:
+  - `features/src/feature_configs.rs` — `require_explicit_agent_type: Option<bool>` on `MultiAgentV2ConfigToml`.
+  - `core/src/config/mod.rs` — field on `MultiAgentV2Config` (default false) + resolver.
+  - `core/src/tools/handlers/multi_agents_v2/spawn.rs` — pre-spawn gate.
+  - `core/src/tools/handlers/multi_agents_tests.rs` — rejection test.
+  - `core/config.schema.json` — regenerated (`just write-config-schema`).
+- Rebase risk: **medium** — `config/mod.rs` is very high churn; reuses the existing `multi_agent_v2` config plumbing.
+
+### C5b — remaining strict checks + budget breakers — _planned, provisional_ — deliverable 8
+Reject explicit model/effort silent-substitution pre-spawn (role-pin conflict); `[agents.budget]` caps
+(per-root spawn cap, per-model/write concurrency, depth, allowlist); optional route preflight/dry-run.
+**Names/defaults reconcile with `agent-swarm-orchestration-lessons.md`** (per-agent honored-or-fail-loudly,
+declared availability fallback, no expensive child by inheritance).
 - Files: `config/`, `features/`, `core/src/agent/`.
-- Rebase risk: medium (mostly additive config + new module).
+- Rebase risk: medium (additive config + new module).
 
 ---
 

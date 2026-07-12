@@ -1151,6 +1151,9 @@ pub struct MultiAgentV2Config {
     pub tool_namespace: Option<String>,
     pub hide_spawn_agent_metadata: bool,
     pub non_code_mode_only: bool,
+    /// When true, spawns must specify an explicit `agent_type`; an omitted role is rejected before
+    /// a child is created (strict routing — no generic inherited children).
+    pub require_explicit_agent_type: bool,
 }
 
 impl MultiAgentV2Config {
@@ -1173,6 +1176,7 @@ impl MultiAgentV2Config {
             tool_namespace: Some(DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE.to_string()),
             hide_spawn_agent_metadata: true,
             non_code_mode_only: true,
+            require_explicit_agent_type: false,
         }
     }
 }
@@ -2538,6 +2542,9 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     let non_code_mode_only = base
         .and_then(|config| config.non_code_mode_only)
         .unwrap_or(default.non_code_mode_only);
+    let require_explicit_agent_type = base
+        .and_then(|config| config.require_explicit_agent_type)
+        .unwrap_or(default.require_explicit_agent_type);
 
     MultiAgentV2Config {
         max_concurrent_threads_per_session,
@@ -2551,6 +2558,7 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         tool_namespace,
         hide_spawn_agent_metadata,
         non_code_mode_only,
+        require_explicit_agent_type,
     }
 }
 

@@ -64,6 +64,10 @@ pub struct MultiAgentV2ConfigToml {
     pub hide_spawn_agent_metadata: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_code_mode_only: Option<bool>,
+    /// When true, `spawn_agent` must specify an explicit `agent_type`; an omitted role is rejected
+    /// before a child thread is created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_explicit_agent_type: Option<bool>,
 }
 
 impl FeatureConfig for MultiAgentV2ConfigToml {
