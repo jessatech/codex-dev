@@ -1154,6 +1154,10 @@ pub struct MultiAgentV2Config {
     /// When true, spawns must specify an explicit `agent_type`; an omitted role is rejected before
     /// a child is created (strict routing — no generic inherited children).
     pub require_explicit_agent_type: bool,
+    /// When true, a spawn whose explicit `model`/`reasoning_effort` conflicts with the selected
+    /// role's pinned value is rejected before a child is created, instead of silently substituting
+    /// the role's value.
+    pub reject_route_substitution: bool,
 }
 
 impl MultiAgentV2Config {
@@ -1177,6 +1181,7 @@ impl MultiAgentV2Config {
             hide_spawn_agent_metadata: true,
             non_code_mode_only: true,
             require_explicit_agent_type: false,
+            reject_route_substitution: false,
         }
     }
 }
@@ -2545,6 +2550,9 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     let require_explicit_agent_type = base
         .and_then(|config| config.require_explicit_agent_type)
         .unwrap_or(default.require_explicit_agent_type);
+    let reject_route_substitution = base
+        .and_then(|config| config.reject_route_substitution)
+        .unwrap_or(default.reject_route_substitution);
 
     MultiAgentV2Config {
         max_concurrent_threads_per_session,
@@ -2559,6 +2567,7 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         hide_spawn_agent_metadata,
         non_code_mode_only,
         require_explicit_agent_type,
+        reject_route_substitution,
     }
 }
 

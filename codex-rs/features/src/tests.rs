@@ -676,6 +676,8 @@ non_code_mode_only = true
             tool_namespace: Some("agents".to_string()),
             hide_spawn_agent_metadata: Some(true),
             non_code_mode_only: Some(true),
+            require_explicit_agent_type: None,
+            reject_route_substitution: None,
         }))
     );
 }

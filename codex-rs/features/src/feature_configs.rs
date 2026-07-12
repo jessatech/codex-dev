@@ -68,6 +68,10 @@ pub struct MultiAgentV2ConfigToml {
     /// before a child thread is created.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_explicit_agent_type: Option<bool>,
+    /// When true, a spawn whose explicit `model`/`reasoning_effort` conflicts with the selected
+    /// role's pinned value is rejected before a child thread is created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reject_route_substitution: Option<bool>,
 }
 
 impl FeatureConfig for MultiAgentV2ConfigToml {

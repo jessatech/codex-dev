@@ -125,11 +125,26 @@ explicit role instead of a generic inherited child. Default behavior unchanged.
   - `core/config.schema.json` — regenerated (`just write-config-schema`).
 - Rebase risk: **medium** — `config/mod.rs` is very high churn; reuses the existing `multi_agent_v2` config plumbing.
 
-### C5b — remaining strict checks + budget breakers — _planned, provisional_ — deliverable 8
-Reject explicit model/effort silent-substitution pre-spawn (role-pin conflict); `[agents.budget]` caps
-(per-root spawn cap, per-model/write concurrency, depth, allowlist); optional route preflight/dry-run.
-**Names/defaults reconcile with `agent-swarm-orchestration-lessons.md`** (per-agent honored-or-fail-loudly,
-declared availability fallback, no expensive child by inheritance).
+### C5b — strict routing: reject route substitution — _validated, ready to commit_ — deliverable 8
+Adds `features.multi_agent_v2.reject_route_substitution` (default **false**, opt-in). When enabled, a spawn
+whose explicit `model`/`reasoning_effort` conflicts with the selected role's **pinned** value is rejected
+**before** a child is created, instead of silently substituting the role's value (research doc #1: "never
+silently substitute"). Detection reads the role's *declared* pins (deterministic — no dependency on the
+config-layer rebuild internals), so it never false-rejects a role that doesn't pin the field.
+- Files:
+  - `features/src/feature_configs.rs` (field) + `features/src/tests.rs` (initializer — also backfills the
+    C5a `require_explicit_agent_type` field the codex-core-only test run had missed).
+  - `core/src/config/mod.rs` (field + resolver); `core/config.schema.json` (regenerated).
+  - `core/src/agent/role.rs` — `role_pinned_model_and_effort` helper.
+  - `core/src/tools/handlers/multi_agents_v2/spawn.rs` — pre-spawn gate.
+  - `core/src/tools/handlers/multi_agents_tests.rs` — conflict-rejection test.
+- Rebase risk: medium.
+- **Process note:** touching `features/` requires running the `codex-features` tests, not just `codex-core`.
+
+### C5c — budget circuit breakers — _planned, provisional_ — deliverable 8
+`[agents.budget]` caps (per-root total-spawn cap, per-model/write concurrency, depth) — needs a per-root
+spawn counter (state on `AgentControl`); plus optional route preflight/dry-run. **Reconcile names/defaults
+with `agent-swarm-orchestration-lessons.md`.**
 - Files: `config/`, `features/`, `core/src/agent/`.
 - Rebase risk: medium (additive config + new module).
 

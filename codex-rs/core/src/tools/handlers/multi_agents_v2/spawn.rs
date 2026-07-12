@@ -9,6 +9,7 @@ use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
 use crate::agent::role::resolve_role_config;
+use crate::agent::role::role_pinned_model_and_effort;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
@@ -67,6 +68,33 @@ async fn handle_spawn_agent(
              the inherited default"
                 .to_string(),
         ));
+    }
+
+    if turn.config.multi_agent_v2.reject_route_substitution
+        && let Some(role) =
+            role_name.and_then(|name| resolve_role_config(turn.config.as_ref(), name))
+    {
+        let (pinned_model, pinned_effort) = role_pinned_model_and_effort(role);
+        if let (Some(requested), Some(pinned)) = (args.model.as_deref(), pinned_model.as_deref())
+            && requested != pinned
+        {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "strict routing: role `{}` pins model `{pinned}` and cannot honor the requested \
+                 model `{requested}`",
+                role_name.unwrap_or(DEFAULT_ROLE_NAME)
+            )));
+        }
+        if let (Some(requested), Some(pinned)) =
+            (args.reasoning_effort.as_ref(), pinned_effort.as_deref())
+            && !requested.as_str().eq_ignore_ascii_case(pinned)
+        {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "strict routing: role `{}` pins reasoning effort `{pinned}` and cannot honor the \
+                 requested effort `{}`",
+                role_name.unwrap_or(DEFAULT_ROLE_NAME),
+                requested.as_str()
+            )));
+        }
     }
 
     let message = message_content(args.message)?;
