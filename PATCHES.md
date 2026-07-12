@@ -74,10 +74,26 @@ rejects overrides via `reject_full_fork_spawn_overrides`), positive int => parti
 - Full `codex-core` lib suite via nextest: **2017 passed, 2 failed**. The 2 failures are `shell_snapshot::tests::{try_create_creates_and_deletes_snapshot_file, try_create_uses_distinct_generation_paths}` — environmental (`"validation_failed"` spawning a real shell under the sandbox), untouched by this diff.
 - `cargo fmt -p codex-core`: clean. `cargo clippy -p codex-core --tests`: no warnings in changed files.
 
-### C2 — resolved-route record + provenance — _planned_ — deliverable 5
-`ResolvedSubagentRoute { agent_type, task_name, model, reasoning_effort, service_tier, fork_mode, permission_profile, agent_config_path, provenance{per-field source}, warnings }`, returned in the (un-hidden) spawn result. Additive.
-- Files: new module under `core/src/tools/handlers/multi_agents_v2/`, `spawn.rs`.
-- Rebase risk: medium.
+### C2 — resolved-route record + provenance — _validated, ready to commit_ — deliverable 5
+Adds `ResolvedSubagentRoute { task_name, agent_type, model, reasoning_effort, service_tier, fork_mode, agent_config_path, warnings }`, each routed value tagged with a `RouteSource` provenance
+(`explicit_spawn_argument` / `custom_agent_file` / `parent_inheritance` / `model_catalog_default` /
+`client_default`). Effective values are read from the child's runtime `ThreadConfigSnapshot` (source of
+truth — not the child's self-report); provenance is derived by comparing them against the explicit
+request, the parent baseline, and whether a role file was applied. A mismatch between an explicit
+request and the effective value is recorded as a `warnings` entry (the research doc's #1 silent-
+substitution failure, surfaced as data). Returned only on the **un-hidden** `WithNickname` result, so
+the reserved `collaboration` (`HiddenMetadata`) schema is byte-for-byte unchanged.
+
+- Files:
+  - `core/src/tools/handlers/multi_agents_v2/resolved_route.rs` (new) — record + `RouteSource` + pure `resolve()`.
+  - `core/src/tools/handlers/multi_agents_v2/resolved_route_tests.rs` (new) — 7 provenance/serialization tests.
+  - `core/src/tools/handlers/multi_agents_v2.rs` — `mod resolved_route;`.
+  - `core/src/tools/handlers/multi_agents_v2/spawn.rs` — capture requested route + parent baseline before spawn; build the route from the snapshot; add `route: Option<Box<ResolvedSubagentRoute>>` to `WithNickname` (boxed to satisfy `large_enum_variant`).
+  - `core/src/tools/handlers/multi_agents_tests.rs` — integration test asserting the un-hidden result reports the route with provenance.
+- **Deviation from contract:** `permission_profile` and per-field usage/cost are **deferred to C4** (surfacing). `PermissionProfile` is a complex generic enum that needs display formatting, and it carries little routing signal (always the parent's live runtime profile). Documented so the deferral is explicit.
+- Rebase risk: **medium** — `spawn.rs` result shape + handler are active upstream; the record is a new isolated module.
+
+**Validation:** 7 record tests + 1 integration test pass; provenance derivation and camelCase/snake_case serialization verified. Full `codex-core` lib via nextest: **2025 passed, 2 failed** (the same environmental `shell_snapshot` tests). `fmt` clean; `clippy -p codex-core --tests` clean on changed files.
 
 ### C3 — persist resolved route (versioned) — _planned_ — deliverable 5/6
 Persist the resolved route in rollout/session metadata so resumed sessions/UIs don't depend on ephemeral tool output.

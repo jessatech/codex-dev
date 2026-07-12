@@ -1,9 +1,14 @@
+use super::resolved_route::EffectiveRoute;
+use super::resolved_route::ParentBaseline;
+use super::resolved_route::ResolvedSubagentRoute;
+use super::resolved_route::RouteRequest;
 use super::*;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::agent::role::resolve_role_config;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
@@ -92,6 +97,31 @@ async fn handle_spawn_agent(
     .await?;
     apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
 
+    // Capture the requested route and parent baseline before `config` and `fork_mode` are consumed
+    // by the spawn, so the effective route (read from the child snapshot below) can be reported
+    // with provenance.
+    let resolved_role_name = role_name.unwrap_or(DEFAULT_ROLE_NAME);
+    let route_request = RouteRequest {
+        task_name: args.task_name.clone(),
+        role_name: resolved_role_name.to_string(),
+        agent_type_explicit: role_name.is_some(),
+        agent_config_path: resolve_role_config(turn.config.as_ref(), resolved_role_name)
+            .and_then(|role| role.config_file.as_ref())
+            .map(|path| path.display().to_string()),
+        requested_model: args.model.clone(),
+        requested_reasoning_effort: args.reasoning_effort.clone(),
+        requested_service_tier: args.service_tier.clone(),
+        fork_mode: fork_mode.clone(),
+    };
+    let parent_baseline = ParentBaseline {
+        model: turn.model_info.slug.clone(),
+        reasoning_effort: turn
+            .reasoning_effort
+            .clone()
+            .or_else(|| turn.model_info.default_reasoning_level.clone()),
+        service_tier: turn.config.service_tier.clone(),
+    };
+
     let spawn_source = thread_spawn_source(
         session.thread_id,
         &turn.session_source,
@@ -139,6 +169,17 @@ async fn handle_spawn_agent(
         .as_ref()
         .and_then(|snapshot| snapshot.session_source.get_nickname())
         .or(spawned_agent.metadata.agent_nickname);
+    let resolved_route = agent_snapshot.as_ref().map(|snapshot| {
+        ResolvedSubagentRoute::resolve(
+            route_request,
+            EffectiveRoute {
+                model: snapshot.model.clone(),
+                reasoning_effort: snapshot.reasoning_effort.clone(),
+                service_tier: snapshot.service_tier.clone(),
+            },
+            parent_baseline,
+        )
+    });
     emit_sub_agent_activity(
         &session,
         &turn,
@@ -165,6 +206,7 @@ async fn handle_spawn_agent(
         Ok(SpawnAgentResult::WithNickname {
             task_name,
             nickname,
+            route: resolved_route.map(Box::new),
         })
     }
 }
@@ -255,6 +297,8 @@ pub(crate) enum SpawnAgentResult {
     WithNickname {
         task_name: String,
         nickname: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        route: Option<Box<ResolvedSubagentRoute>>,
     },
     HiddenMetadata {
         task_name: String,
