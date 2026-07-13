@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 pub const MULTI_AGENT_V1_NAMESPACE: &str = "multi_agent_v1";
 const MULTI_AGENT_V1_NAMESPACE_DESCRIPTION: &str = "Tools for spawning and managing sub-agents.";
 
-const SPAWN_AGENT_INHERITED_MODEL_GUIDANCE: &str = "Spawned agents inherit your current model by default. Omit `model` to use that preferred default; set `model` only when an explicit override is needed.";
+const SPAWN_AGENT_INHERITED_MODEL_GUIDANCE: &str = "A spawned agent inherits your current model only when `model` is omitted. Set `model` explicitly whenever a different model is more appropriate for that child's work.";
 const SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION: &str =
     "Model override for the new agent. Omit unless an explicit override is needed.";
 const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str =
@@ -629,7 +629,7 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         (
             "fork_turns".to_string(),
             JsonSchema::string(Some(
-                "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
+                "Optional number of turns to fork. Omission creates a fresh child when agent_type, model, or reasoning_effort is explicit; otherwise it defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
                     .to_string(),
             )),
         ),

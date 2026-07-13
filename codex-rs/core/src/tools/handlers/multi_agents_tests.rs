@@ -62,6 +62,7 @@ use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -426,8 +427,13 @@ async fn multi_agent_v2_spawn_fork_turns_all_rejects_agent_type_override() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_spawn_defaults_to_full_fork_and_rejects_child_model_overrides() {
+async fn multi_agent_v2_spawn_omitted_fork_with_route_creates_fresh_child() {
+    // Regression (#32031): an omitted `fork_turns` combined with an explicit route must create a
+    // fresh child that applies the requested role, rather than defaulting to a full-history fork
+    // that rejects the override. Explicit `fork_turns = "all"` still rejects overrides — see
+    // `multi_agent_v2_spawn_fork_turns_all_rejects_agent_type_override`.
     let (mut session, mut turn) = make_session_and_context().await;
+    let role_name = install_role_with_model_override(&mut turn).await;
     let manager = thread_manager();
     let root = manager
         .start_thread((*turn.config).clone())
@@ -440,7 +446,122 @@ async fn multi_agent_v2_spawn_defaults_to_full_fork_and_rejects_child_model_over
         .features
         .enable(Feature::MultiAgentV2)
         .expect("test config should allow feature update");
-    set_turn_config(&mut turn, config);
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
+
+    let output = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "routed_fresh_child",
+                "agent_type": role_name
+            })),
+        ))
+        .await
+        .expect("omitted fork with an explicit route should create a fresh child");
+    let (content, _) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("spawn_agent result should be json");
+    assert_eq!(result["task_name"], "/root/routed_fresh_child");
+    let agent_id = manager
+        .captured_ops()
+        .into_iter()
+        .map(|(thread_id, _)| thread_id)
+        .find(|thread_id| *thread_id != root.thread_id)
+        .expect("spawned agent should receive an op");
+    let snapshot = manager
+        .get_thread(agent_id)
+        .await
+        .expect("spawned agent thread should exist")
+        .config_snapshot()
+        .await;
+
+    assert_eq!(snapshot.model, "gpt-5-role-override");
+    assert_eq!(snapshot.model_provider_id, "ollama");
+    assert_eq!(snapshot.reasoning_effort, Some(ReasoningEffort::Minimal));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_unhidden_spawn_result_reports_resolved_route_with_provenance() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let role_name = install_role_with_model_override(&mut turn).await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    // Expanded (non-reserved) surface exposes the resolved route in the tool output.
+    config.multi_agent_v2.hide_spawn_agent_metadata = false;
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
+
+    let output = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "routed_child",
+                "agent_type": role_name
+            })),
+        ))
+        .await
+        .expect("unhidden spawn should succeed");
+    let (content, _) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("spawn_agent result should be json");
+    let route = &result["route"];
+
+    assert_eq!(route["agentType"]["value"], json!(role_name));
+    assert_eq!(
+        route["agentType"]["source"],
+        json!("explicit_spawn_argument")
+    );
+    assert_eq!(route["model"]["value"], json!("gpt-5-role-override"));
+    assert_eq!(route["model"]["source"], json!("custom_agent_file"));
+    assert_eq!(route["reasoningEffort"]["value"], json!("minimal"));
+    assert_eq!(route["forkMode"], json!({ "kind": "fresh" }));
+    assert!(route["agentConfigPath"].is_string());
+}
+
+#[tokio::test]
+async fn multi_agent_v2_strict_routing_rejects_spawn_without_agent_type() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.require_explicit_agent_type = true;
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
 
     let err = SpawnAgentHandlerV2::default()
         .handle(invocation(
@@ -449,20 +570,16 @@ async fn multi_agent_v2_spawn_defaults_to_full_fork_and_rejects_child_model_over
             "spawn_agent",
             function_payload(json!({
                 "message": "inspect this repo",
-                "task_name": "fork_context_v2",
-                "model": "gpt-5-child-override",
-                "reasoning_effort": "low"
+                "task_name": "unrouted"
             })),
         ))
         .await
         .err()
-        .expect("default full fork should reject child model overrides");
+        .expect("strict routing should reject a spawn without agent_type");
 
-    assert_eq!(
-        err,
-            FunctionCallError::RespondToModel(
-            "Full-history forked agents inherit the parent agent type, model, and reasoning effort; omit agent_type, model, and reasoning_effort, or spawn without a full-history fork.".to_string(),
-        )
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("explicit agent_type")),
+        "unexpected error: {err:?}"
     );
 }
 
@@ -499,6 +616,279 @@ async fn multi_agent_v2_spawn_rejects_child_model_from_different_backend() {
                 .to_string()
         )
     );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_strict_routing_rejects_model_conflicting_with_role_pin() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let role_name = install_role_with_model_override(&mut turn).await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.reject_route_substitution = true;
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
+
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "conflict",
+                "agent_type": role_name,
+                "model": "gpt-5.4",
+                "fork_turns": "none"
+            })),
+        ))
+        .await
+        .err()
+        .expect("strict routing should reject a model that conflicts with the role pin");
+
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("pins model") && msg.contains("gpt-5-role-override")),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_allows_sequential_children_without_lifetime_cap() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.max_depth = 2;
+    let turn = Arc::new(TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    });
+    let session = Arc::new(session);
+
+    let mut child_ids = HashSet::new();
+    for index in 0..6 {
+        let task_name = format!("worker_{index}");
+        SpawnAgentHandlerV2::default()
+            .handle(invocation(
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                "spawn_agent",
+                function_payload(json!({
+                    "message": "inspect this repo",
+                    "task_name": task_name,
+                })),
+            ))
+            .await
+            .expect("sequential root spawn should succeed");
+        let child_id = session
+            .services
+            .agent_control
+            .resolve_agent_reference(session.thread_id, &turn.session_source, task_name.as_str())
+            .await
+            .expect("child path should resolve");
+        assert!(child_ids.insert(child_id), "child ids should be unique");
+        session
+            .services
+            .agent_control
+            .close_agent(child_id)
+            .await
+            .expect("child should close before the next spawn");
+    }
+
+    assert_eq!(child_ids.len(), 6);
+    assert_eq!(manager.list_thread_ids().await, vec![root.thread_id]);
+}
+
+#[tokio::test]
+async fn multi_agent_v2_nested_orchestrator_can_route_a_different_child_model() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    let role_name = "non-pinning-reader";
+    tokio::fs::create_dir_all(&config.codex_home)
+        .await
+        .expect("codex home should be created");
+    let role_config_path = config.codex_home.as_path().join("non-pinning-reader.toml");
+    tokio::fs::write(
+        &role_config_path,
+        concat!(
+            "developer_instructions = \"Read only the files relevant to the task.\"\n",
+            "model_reasoning_effort = \"medium\"",
+        ),
+    )
+    .await
+    .expect("reader role should be written");
+    config.agent_roles.insert(
+        role_name.to_string(),
+        AgentRoleConfig {
+            description: Some("Reader role with effort but no pinned model".to_string()),
+            config_file: Some(role_config_path),
+            nickname_candidates: None,
+        },
+    );
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.max_depth = 2;
+    config.multi_agent_v2.require_explicit_agent_type = true;
+    config.multi_agent_v2.reject_route_substitution = true;
+    set_turn_config(&mut turn, config);
+    turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: root.thread_id,
+        depth: 1,
+        agent_path: Some(AgentPath::try_from("/root/orchestrator").expect("agent path")),
+        agent_nickname: None,
+        agent_role: Some("worker".to_string()),
+    });
+
+    SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "read the relevant files",
+                "task_name": "reader",
+                "agent_type": role_name,
+                "model": "gpt-5.6-terra",
+                "reasoning_effort": "medium",
+                "fork_turns": "none"
+            })),
+        ))
+        .await
+        .expect("nested orchestrator should route a different child model");
+
+    let agent_id = manager
+        .captured_ops()
+        .into_iter()
+        .map(|(thread_id, _)| thread_id)
+        .find(|thread_id| *thread_id != root.thread_id)
+        .expect("spawned reader should receive an op");
+    let snapshot = manager
+        .get_thread(agent_id)
+        .await
+        .expect("spawned reader thread should exist")
+        .config_snapshot()
+        .await;
+
+    assert_eq!(snapshot.model, "gpt-5.6-terra");
+    assert_eq!(snapshot.reasoning_effort, Some(ReasoningEffort::Medium));
+}
+
+#[tokio::test]
+async fn multi_agent_v2_role_cannot_override_root_depth_limit() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.max_depth = 2;
+    tokio::fs::create_dir_all(&config.codex_home)
+        .await
+        .expect("codex home should be created");
+    for role_max_depth in [1, 4] {
+        let role_name = format!("depth-override-{role_max_depth}");
+        let role_config_path = config.codex_home.join(format!("{role_name}.toml"));
+        tokio::fs::write(
+            &role_config_path,
+            format!(
+                "model = \"gpt-5.6-terra\"\n[features.multi_agent_v2]\nmax_depth = {role_max_depth}\n"
+            ),
+        )
+        .await
+        .expect("depth override role should be written");
+        config.agent_roles.insert(
+            role_name,
+            AgentRoleConfig {
+                description: Some(
+                    "Role that attempts to override the root depth limit".to_string(),
+                ),
+                config_file: Some(role_config_path.to_path_buf()),
+                nickname_candidates: None,
+            },
+        );
+    }
+    set_turn_config(&mut turn, config.clone());
+    let root = manager
+        .start_thread(config)
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = root.thread.codex.session.services.agent_control.clone();
+    session.thread_id = root.thread_id;
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    for role_max_depth in [1, 4] {
+        let role_name = format!("depth-override-{role_max_depth}");
+        let task_name = format!("depth_{role_max_depth}");
+        SpawnAgentHandlerV2::default()
+            .handle(invocation(
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                "spawn_agent",
+                function_payload(json!({
+                    "message": "inspect the relevant files",
+                    "task_name": task_name,
+                    "agent_type": role_name,
+                    "fork_turns": "none"
+                })),
+            ))
+            .await
+            .expect("routed spawn should succeed");
+
+        let child_id = session
+            .services
+            .agent_control
+            .resolve_agent_reference(session.thread_id, &turn.session_source, task_name.as_str())
+            .await
+            .expect("spawned child should resolve");
+        let child_config = manager
+            .get_thread(child_id)
+            .await
+            .expect("spawned child should exist")
+            .codex
+            .session
+            .get_config()
+            .await;
+        assert_eq!(child_config.multi_agent_v2.max_depth, 2);
+        session
+            .services
+            .agent_control
+            .close_agent(child_id)
+            .await
+            .expect("spawned child should close");
+    }
 }
 
 #[tokio::test]
@@ -2512,17 +2902,12 @@ async fn spawn_agent_allows_depth_up_to_configured_max_depth() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_spawn_agent_ignores_configured_max_depth() {
-    #[derive(Debug, Deserialize)]
-    struct SpawnAgentResult {
-        task_name: String,
-        nickname: Option<String>,
-    }
-
+async fn multi_agent_v2_spawn_agent_rejects_beyond_configured_depth() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let mut config = (*turn.config).clone();
-    config.agent_max_depth = 1;
+    config.agent_max_depth = 3;
+    config.multi_agent_v2.max_depth = 2;
     config
         .features
         .enable(Feature::MultiAgentV2)
@@ -2537,32 +2922,33 @@ async fn multi_agent_v2_spawn_agent_ignores_configured_max_depth() {
     let parent_path = AgentPath::try_from("/root/parent").expect("agent path");
     turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id: root.thread_id,
-        depth: 1,
+        depth: 2,
         agent_path: Some(parent_path),
         agent_nickname: None,
         agent_role: None,
     });
 
-    let invocation = invocation(
-        Arc::new(session),
-        Arc::new(turn),
-        "spawn_agent",
-        function_payload(json!({
-            "message": "hello",
-            "task_name": "child",
-            "fork_turns": "none"
-        })),
-    );
-    let output = SpawnAgentHandlerV2::default()
-        .handle(invocation)
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "hello",
+                "task_name": "child",
+                "fork_turns": "none"
+            })),
+        ))
         .await
-        .expect("multi-agent v2 spawn should ignore max depth");
-    let (content, success) = expect_text_output(output);
-    let result: SpawnAgentResult =
-        serde_json::from_str(&content).expect("spawn_agent result should be json");
-    assert_eq!(result.task_name, "/root/parent/child");
-    assert_eq!(result.nickname, None);
-    assert_eq!(success, Some(true));
+        .err()
+        .expect("multi-agent v2 spawn should reject nested orchestration");
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string()
+        )
+    );
+    assert_eq!(manager.list_thread_ids().await, vec![root.thread_id]);
 }
 
 #[tokio::test]

@@ -1,3 +1,4 @@
+use crate::agent::multi_agent_v2_spawning_enabled;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -71,6 +72,16 @@ pub async fn handle(
     turn: Arc<TurnContext>,
     arguments: String,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
+    if turn.multi_agent_version == MultiAgentVersion::V2
+        && !multi_agent_v2_spawning_enabled(
+            &turn.session_source,
+            turn.config.multi_agent_v2.max_depth,
+        )
+    {
+        return Err(FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string(),
+        ));
+    }
     let args: SpawnAgentsOnCsvArgs = parse_arguments(arguments.as_str())?;
     if args.instruction.trim().is_empty() {
         return Err(FunctionCallError::RespondToModel(

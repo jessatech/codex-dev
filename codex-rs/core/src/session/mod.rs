@@ -545,6 +545,8 @@ impl Codex {
         config
             .startup_warnings
             .extend(user_instruction_provider_warnings);
+        config.multi_agent_v2.max_depth =
+            agent_control.initialize_multi_agent_v2_max_depth(config.multi_agent_v2.max_depth);
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
             // not on caller-provided exec-policy rules that could shape the

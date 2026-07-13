@@ -71,6 +71,57 @@ fn non_thread_spawn_subagents_default_to_depth_zero() {
 }
 
 #[test]
+fn multi_agent_v2_spawning_respects_the_configured_thread_spawn_depth() {
+    assert!(multi_agent_v2_spawning_enabled(
+        &SessionSource::Cli,
+        /*max_depth*/ 2
+    ));
+    assert!(multi_agent_v2_spawning_enabled(
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        /*max_depth*/ 2
+    ));
+    assert!(multi_agent_v2_spawning_enabled(
+        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 3,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        /*max_depth*/ 4
+    ));
+    for session_source in [
+        SessionSource::SubAgent(SubAgentSource::Review),
+        SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string())),
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 0,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 2,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        }),
+    ] {
+        assert!(!multi_agent_v2_spawning_enabled(
+            &session_source,
+            /*max_depth*/ 2
+        ));
+    }
+}
+
+#[test]
 fn reservation_drop_releases_slot() {
     let registry = Arc::new(AgentRegistry::default());
     let reservation = registry.reserve_spawn_slot(Some(1)).expect("reserve slot");

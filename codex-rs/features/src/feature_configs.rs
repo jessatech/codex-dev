@@ -37,6 +37,10 @@ pub struct MultiAgentV2ConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
     pub max_concurrent_threads_per_session: Option<usize>,
+    /// Maximum V2 thread-spawn nesting depth. Root sessions are depth zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 4))]
+    pub max_depth: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0, max = 3600000))]
     pub min_wait_timeout_ms: Option<i64>,
@@ -68,6 +72,14 @@ pub struct MultiAgentV2ConfigToml {
     pub expose_spawn_agent_model_overrides: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_code_mode_only: Option<bool>,
+    /// When true, `spawn_agent` must specify an explicit `agent_type`; an omitted role is rejected
+    /// before a child thread is created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_explicit_agent_type: Option<bool>,
+    /// When true, a spawn whose explicit `model`/`reasoning_effort` conflicts with the selected
+    /// role's pinned value is rejected before a child thread is created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reject_route_substitution: Option<bool>,
 }
 
 impl FeatureConfig for MultiAgentV2ConfigToml {
