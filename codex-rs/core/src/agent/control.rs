@@ -42,6 +42,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::Weak;
 use tokio::sync::watch;
 use tracing::warn;
@@ -103,6 +104,9 @@ pub(crate) struct AgentControl {
     state: Arc<AgentRegistry>,
     v2_residency: Arc<V2Residency>,
     agent_execution_limiter: Arc<AgentExecutionLimiter>,
+    /// Multi-Agent V2 nesting limit captured from the root session before role layers can alter
+    /// descendant configs.
+    multi_agent_v2_max_depth: Arc<OnceLock<i32>>,
     /// Session-scoped state shared by the root thread and every cloned sub-agent control handle.
     rollout_budget: Arc<RolloutBudget>,
 }
@@ -131,6 +135,10 @@ impl AgentControl {
 
     pub(crate) fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    pub(crate) fn initialize_multi_agent_v2_max_depth(&self, max_depth: i32) -> i32 {
+        *self.multi_agent_v2_max_depth.get_or_init(|| max_depth)
     }
 
     pub(crate) fn rollout_budget(&self) -> &RolloutBudget {

@@ -1,4 +1,5 @@
 use crate::agent::exceeds_thread_spawn_depth_limit;
+use crate::agent::multi_agent_v2_spawning_enabled;
 use crate::agent::next_thread_spawn_depth;
 use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
@@ -357,11 +358,22 @@ fn agent_jobs_tools_enabled(turn_context: &TurnContext) -> bool {
         .features
         .get()
         .enabled(Feature::SpawnCsv)
-        && collab_tools_enabled(turn_context)
+        && match turn_context.multi_agent_version {
+            MultiAgentVersion::Disabled => false,
+            MultiAgentVersion::V1 => collab_tools_enabled(turn_context),
+            MultiAgentVersion::V2 => multi_agent_v2_spawning_enabled(
+                &turn_context.session_source,
+                turn_context.config.multi_agent_v2.max_depth,
+            ),
+        }
 }
 
 fn agent_jobs_worker_tools_enabled(turn_context: &TurnContext) -> bool {
-    agent_jobs_tools_enabled(turn_context)
+    turn_context
+        .config
+        .features
+        .get()
+        .enabled(Feature::SpawnCsv)
         && matches!(
             &turn_context.session_source,
             SessionSource::SubAgent(SubAgentSource::Other(label))
@@ -772,28 +784,37 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
             let tool_namespace = namespace_tools_enabled(turn_context)
                 .then_some(turn_context.config.multi_agent_v2.tool_namespace.as_deref())
                 .flatten();
-            let agent_type_description =
-                agent_type_description(turn_context, context.default_agent_type_description);
-            planned_tools.add_arc(override_tool_exposure(
-                multi_agent_v2_handler(
-                    SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
-                        available_models: turn_context.available_models.clone(),
-                        agent_type_description,
-                        hide_agent_type_model_reasoning: turn_context
-                            .config
-                            .multi_agent_v2
-                            .hide_spawn_agent_metadata,
-                        expose_spawn_agent_model_overrides: turn_context
-                            .config
-                            .multi_agent_v2
-                            .expose_spawn_agent_model_overrides,
-                        multi_agent_version: turn_context.multi_agent_version,
-                        usage_hint_text: turn_context.config.multi_agent_v2.usage_hint_text.clone(),
-                    }),
-                    tool_namespace,
-                ),
-                exposure,
-            ));
+            if multi_agent_v2_spawning_enabled(
+                &turn_context.session_source,
+                turn_context.config.multi_agent_v2.max_depth,
+            ) {
+                let agent_type_description =
+                    agent_type_description(turn_context, context.default_agent_type_description);
+                planned_tools.add_arc(override_tool_exposure(
+                    multi_agent_v2_handler(
+                        SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
+                            available_models: turn_context.available_models.clone(),
+                            agent_type_description,
+                            hide_agent_type_model_reasoning: turn_context
+                                .config
+                                .multi_agent_v2
+                                .hide_spawn_agent_metadata,
+                            expose_spawn_agent_model_overrides: turn_context
+                                .config
+                                .multi_agent_v2
+                                .expose_spawn_agent_model_overrides,
+                            multi_agent_version: turn_context.multi_agent_version,
+                            usage_hint_text: turn_context
+                                .config
+                                .multi_agent_v2
+                                .usage_hint_text
+                                .clone(),
+                        }),
+                        tool_namespace,
+                    ),
+                    exposure,
+                ));
+            }
             planned_tools.add_arc(override_tool_exposure(
                 multi_agent_v2_handler(SendMessageHandlerV2, tool_namespace),
                 exposure,
@@ -846,9 +867,9 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
 
     if agent_jobs_tools_enabled(turn_context) {
         planned_tools.add(SpawnAgentsOnCsvHandler);
-        if agent_jobs_worker_tools_enabled(turn_context) {
-            planned_tools.add(ReportAgentJobResultHandler);
-        }
+    }
+    if agent_jobs_worker_tools_enabled(turn_context) {
+        planned_tools.add(ReportAgentJobResultHandler);
     }
 }
 

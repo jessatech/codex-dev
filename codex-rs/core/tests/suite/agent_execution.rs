@@ -37,6 +37,136 @@ fn has_function_call_output(request: &wiremock::Request, call_id: &str) -> bool 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_grandchild_request_omits_spawn_agent_at_depth_limit() -> Result<()> {
+    let server = start_mock_server().await;
+    let first_args = serde_json::to_string(&json!({
+        "message": FIRST_TASK,
+        "task_name": "first",
+    }))?;
+    mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| body_contains(request, FIRST_PROMPT),
+        sse(vec![
+            ev_response_created("first-response"),
+            ev_function_call_with_namespace(
+                "first-call",
+                MULTI_AGENT_V2_NAMESPACE,
+                "spawn_agent",
+                &first_args,
+            ),
+            ev_completed("first-response"),
+        ]),
+    )
+    .await;
+    let second_args = serde_json::to_string(&json!({
+        "message": SECOND_TASK,
+        "task_name": "second",
+    }))?;
+    mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| {
+            body_contains(request, FIRST_TASK) && !has_function_call_output(request, "first-call")
+        },
+        sse(vec![
+            ev_response_created("first-worker-response"),
+            ev_function_call_with_namespace(
+                "second-call",
+                MULTI_AGENT_V2_NAMESPACE,
+                "spawn_agent",
+                &second_args,
+            ),
+            ev_completed("first-worker-response"),
+        ]),
+    )
+    .await;
+    let grandchild_request_log = mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| {
+            body_contains(request, SECOND_TASK) && !has_function_call_output(request, "second-call")
+        },
+        sse(vec![
+            ev_response_created("second-worker-response"),
+            ev_completed("second-worker-response"),
+        ]),
+    )
+    .await;
+    mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| has_function_call_output(request, "second-call"),
+        sse(vec![
+            ev_response_created("first-worker-followup-response"),
+            ev_assistant_message("first-worker-followup-message", "child done"),
+            ev_completed("first-worker-followup-response"),
+        ]),
+    )
+    .await;
+    mount_sse_once_match(
+        &server,
+        |request: &wiremock::Request| has_function_call_output(request, "first-call"),
+        sse(vec![
+            ev_response_created("first-followup-response"),
+            ev_assistant_message("first-followup-message", "spawned"),
+            ev_completed("first-followup-response"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_model("koffing").with_config(|config| {
+        config
+            .features
+            .enable(Feature::Collab)
+            .expect("test config should allow feature update");
+        config
+            .features
+            .enable(Feature::MultiAgentV2)
+            .expect("test config should allow feature update");
+        config.agent_max_depth = 3;
+        config.multi_agent_v2.max_depth = 2;
+    });
+    let test = builder.build_with_auto_env(&server).await?;
+    test.submit_turn(FIRST_PROMPT).await?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let grandchild_request = loop {
+        if let Some(request) = grandchild_request_log
+            .requests()
+            .into_iter()
+            .find(|request| {
+                request.body_contains_text(SECOND_TASK)
+                    && request.function_call_output_text("second-call").is_none()
+            })
+        {
+            break request;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for grandchild request");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(
+        grandchild_request.tool_by_name(MULTI_AGENT_V2_NAMESPACE, "spawn_agent"),
+        None
+    );
+    for tool_name in [
+        "send_message",
+        "followup_task",
+        "wait_agent",
+        "interrupt_agent",
+        "list_agents",
+    ] {
+        assert!(
+            grandchild_request
+                .tool_by_name(MULTI_AGENT_V2_NAMESPACE, tool_name)
+                .is_some(),
+            "expected grandchild request to retain {tool_name}"
+        );
+    }
+    assert_eq!(test.thread_manager.list_thread_ids().await.len(), 3);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v2_nested_spawn_checks_shared_active_execution_capacity() -> Result<()> {
     let server = start_mock_server().await;
     let first_args = serde_json::to_string(&json!({
@@ -110,8 +240,9 @@ async fn v2_nested_spawn_checks_shared_active_execution_capacity() -> Result<()>
             .enable(Feature::MultiAgentV2)
             .expect("test config should allow feature update");
         config.multi_agent_v2.max_concurrent_threads_per_session = 2;
+        config.multi_agent_v2.max_depth = 2;
     });
-    let test = builder.build(&server).await?;
+    let test = builder.build_with_auto_env(&server).await?;
     test.submit_turn(FIRST_PROMPT).await?;
 
     let second_output = tokio::time::timeout(Duration::from_secs(2), async {

@@ -206,17 +206,19 @@ impl Default for GhostSnapshotConfig {
 pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES; // 32 KiB
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION: usize = 4;
+pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_DEPTH: i32 = 2;
+pub(crate) const MIN_MULTI_AGENT_V2_MAX_DEPTH: i32 = 1;
+pub(crate) const MAX_MULTI_AGENT_V2_MAX_DEPTH: i32 = 4;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS: i64 = 10_000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
 pub(crate) const DEFAULT_MULTI_AGENT_V2_DEFAULT_WAIT_TIMEOUT_MS: i64 = 30_000;
 const DEFAULT_MULTI_AGENT_V2_ROOT_AGENT_USAGE_HINT_TEXT: &str = r#"You are `/root`, the primary agent in a team of agents collaborating to fulfill the user's goals.
 
 At the start of your turn, you are the active agent.
-You can spawn sub-agents to handle subtasks, and those sub-agents can spawn their own sub-agents.
-All agents in the team, including the agents that you can assign tasks to, are equally intelligent and capable, and have access to the same set of tools.
+You can spawn sub-agents to handle subtasks. Sub-agents may spawn further only while `spawn_agent` is exposed; agents at the configured maximum depth cannot spawn further.
+All agents in the team, including the agents that you can assign tasks to, are equally intelligent and capable, and have access to the tools permitted for their role.
 
 You can use `spawn_agent` to create a new agent, `followup_task` to give an existing agent a new task and trigger a turn, and `send_message` to pass a message to a running agent without triggering a turn.
-Child agents can also spawn their own sub-agents.
 You can decide how much context you want to propagate to your sub-agents with the `fork_turns` parameter.
 
 You will receive messages in the analysis channel in the form:
@@ -231,10 +233,9 @@ They may be addressed as to=/root
 "#;
 const DEFAULT_MULTI_AGENT_V2_SUBAGENT_USAGE_HINT_TEXT: &str = r#"You are an agent in a team of agents collaborating to complete a task.
 
-You can spawn sub-agents to handle subtasks, and those sub-agents can spawn their own sub-agents. All agents in the team, including the agents that you can assign tasks to, are equally intelligent and capable, and have access to the same set of tools.
+All agents in the team are equally intelligent and capable, and have access to the tools permitted for their role.
 
-You can use `spawn_agent` to create a new agent, `followup_task` to give an existing agent a new task and trigger a turn, and `send_message` to pass a message to a running agent.
-Child agents can also spawn their own sub-agents.
+You may spawn sub-agents only when `spawn_agent` is exposed to you; agents at the configured maximum depth cannot spawn further. You can use `followup_task` to give an existing agent a new task and trigger a turn, and `send_message` to pass a message to a running agent.
 
 When you provide a response in the final channel, that content is immediately delivered back to your parent agent.
 
@@ -250,7 +251,7 @@ You may also see them addressed as to=/root/..., which indicates your identity i
 "#;
 const DEFAULT_MULTI_AGENT_V2_MODEL_OVERRIDE_USAGE_HINT_TEXT: &str = "Full-history forks (`fork_turns` omitted or `\"all\"`) inherit the parent model and reasoning effort and do not accept overrides. Only set `model` or `reasoning_effort` when explicitly requested by the user, applicable `AGENTS.md` instructions, or skill instructions; when doing so, set `fork_turns` to `\"none\"` or a positive integer string.";
 const DEFAULT_MULTI_AGENT_V2_TOOL_NAMESPACE: &str = "collaboration";
-const DEFAULT_MULTI_AGENT_V2_SHARED_USAGE_HINT_TEXT: &str = r#"Note that collaboration tools cannot be called from inside `functions.exec`. Call `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `interrupt_agent`, and `list_agents` only as direct tool calls using the recipient shown in their tool definitions, such as `to=functions.collaboration.spawn_agent`, since they are intentionally absent from the `functions.exec` `tools.*` namespace. Available tools in `functions.exec` are explicitly described with a `tools` namespace in the developer message.
+const DEFAULT_MULTI_AGENT_V2_SHARED_USAGE_HINT_TEXT: &str = r#"Note that collaboration tools cannot be called from inside `functions.exec`. Call only the collaboration tools exposed to you, using the recipient shown in their tool definitions, since they are intentionally absent from the `functions.exec` `tools.*` namespace. Available tools in `functions.exec` are explicitly described with a `tools` namespace in the developer message.
 
 All agents share the same directory. In detail:
 - All agents have access to the same container and filesystem as you.
@@ -917,7 +918,8 @@ pub struct Config {
     /// Whether to record a model-visible message when an agent turn is interrupted.
     pub agent_interrupt_message_enabled: bool,
 
-    /// Maximum nesting depth allowed for spawned agent threads.
+    /// Maximum nesting depth allowed for legacy multi-agent threads. Multi-agent V2 uses
+    /// `features.multi_agent_v2.max_depth` instead.
     pub agent_max_depth: i32,
 
     /// User-defined role declarations keyed by role name.
@@ -1192,6 +1194,7 @@ impl Default for CurrentTimeReminderConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MultiAgentV2Config {
     pub max_concurrent_threads_per_session: usize,
+    pub max_depth: i32,
     pub min_wait_timeout_ms: i64,
     pub max_wait_timeout_ms: i64,
     pub default_wait_timeout_ms: i64,
@@ -1203,12 +1206,20 @@ pub struct MultiAgentV2Config {
     pub hide_spawn_agent_metadata: bool,
     pub expose_spawn_agent_model_overrides: bool,
     pub non_code_mode_only: bool,
+    /// When true, spawns must specify an explicit `agent_type`; an omitted role is rejected before
+    /// a child is created (strict routing — no generic inherited children).
+    pub require_explicit_agent_type: bool,
+    /// When true, a spawn whose explicit `model`/`reasoning_effort` conflicts with the selected
+    /// role's pinned value is rejected before a child is created, instead of silently substituting
+    /// the role's value.
+    pub reject_route_substitution: bool,
 }
 
 impl MultiAgentV2Config {
     fn defaults_for_max_concurrency(max_concurrent_threads_per_session: usize) -> Self {
         Self {
             max_concurrent_threads_per_session,
+            max_depth: DEFAULT_MULTI_AGENT_V2_MAX_DEPTH,
             min_wait_timeout_ms: DEFAULT_MULTI_AGENT_V2_MIN_WAIT_TIMEOUT_MS,
             max_wait_timeout_ms: DEFAULT_MULTI_AGENT_V2_MAX_WAIT_TIMEOUT_MS,
             default_wait_timeout_ms: DEFAULT_MULTI_AGENT_V2_DEFAULT_WAIT_TIMEOUT_MS,
@@ -1226,6 +1237,8 @@ impl MultiAgentV2Config {
             hide_spawn_agent_metadata: true,
             expose_spawn_agent_model_overrides: true,
             non_code_mode_only: true,
+            require_explicit_agent_type: false,
+            reject_route_substitution: false,
         }
     }
 }
@@ -2569,6 +2582,9 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         .unwrap_or(DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION);
     let default =
         MultiAgentV2Config::defaults_for_max_concurrency(max_concurrent_threads_per_session);
+    let max_depth = base
+        .and_then(|config| config.max_depth)
+        .unwrap_or(default.max_depth);
     let min_wait_timeout_ms = base
         .and_then(|config| config.min_wait_timeout_ms)
         .unwrap_or(default.min_wait_timeout_ms);
@@ -2619,9 +2635,16 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     let non_code_mode_only = base
         .and_then(|config| config.non_code_mode_only)
         .unwrap_or(default.non_code_mode_only);
+    let require_explicit_agent_type = base
+        .and_then(|config| config.require_explicit_agent_type)
+        .unwrap_or(default.require_explicit_agent_type);
+    let reject_route_substitution = base
+        .and_then(|config| config.reject_route_substitution)
+        .unwrap_or(default.reject_route_substitution);
 
     MultiAgentV2Config {
         max_concurrent_threads_per_session,
+        max_depth,
         min_wait_timeout_ms,
         max_wait_timeout_ms,
         default_wait_timeout_ms,
@@ -2633,6 +2656,8 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
         hide_spawn_agent_metadata,
         expose_spawn_agent_model_overrides,
         non_code_mode_only,
+        require_explicit_agent_type,
+        reject_route_substitution,
     }
 }
 
@@ -3560,6 +3585,14 @@ impl Config {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "features.multi_agent_v2.max_concurrent_threads_per_session must be at least 1",
+            ));
+        }
+        if !(MIN_MULTI_AGENT_V2_MAX_DEPTH..=MAX_MULTI_AGENT_V2_MAX_DEPTH)
+            .contains(&multi_agent_v2.max_depth)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "features.multi_agent_v2.max_depth must be between 1 and 4",
             ));
         }
         validate_multi_agent_v2_wait_timeout(

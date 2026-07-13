@@ -37,6 +37,7 @@ mod followup_task;
 mod interrupt_agent;
 mod list_agents;
 mod message_tool;
+mod resolved_route;
 mod send_message;
 mod spawn;
 pub(crate) mod wait;

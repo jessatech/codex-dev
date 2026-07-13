@@ -10401,6 +10401,7 @@ async fn multi_agent_v2_config_from_feature_table() -> std::io::Result<()> {
         r#"[features.multi_agent_v2]
 enabled = true
 max_concurrent_threads_per_session = 5
+max_depth = 4
 min_wait_timeout_ms = 2500
 max_wait_timeout_ms = 120000
 default_wait_timeout_ms = 30000
@@ -10423,6 +10424,7 @@ non_code_mode_only = true
 
     assert!(config.features.enabled(Feature::MultiAgentV2));
     assert_eq!(config.multi_agent_v2.max_concurrent_threads_per_session, 5);
+    assert_eq!(config.multi_agent_v2.max_depth, 4);
     assert_eq!(config.multi_agent_v2.min_wait_timeout_ms, 2500);
     assert_eq!(config.multi_agent_v2.max_wait_timeout_ms, 120000);
     assert_eq!(config.multi_agent_v2.default_wait_timeout_ms, 30000);
@@ -10856,6 +10858,36 @@ default_wait_timeout_ms = 2500
         err.to_string(),
         "features.multi_agent_v2.default_wait_timeout_ms must be at most features.multi_agent_v2.max_wait_timeout_ms"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn multi_agent_v2_rejects_depth_outside_supported_range() -> std::io::Result<()> {
+    for max_depth in [0, 5] {
+        let codex_home = TempDir::new()?;
+        std::fs::write(
+            codex_home.path().join(CONFIG_TOML_FILE),
+            format!(
+                r#"[features.multi_agent_v2]
+enabled = true
+max_depth = {max_depth}
+"#
+            ),
+        )?;
+
+        let err = ConfigBuilder::without_managed_config_for_tests()
+            .codex_home(codex_home.path().to_path_buf())
+            .fallback_cwd(Some(codex_home.path().to_path_buf()))
+            .build()
+            .await
+            .expect_err("unsupported multi-agent V2 depth should fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            err.to_string(),
+            "features.multi_agent_v2.max_depth must be between 1 and 4"
+        );
+    }
 
     Ok(())
 }
