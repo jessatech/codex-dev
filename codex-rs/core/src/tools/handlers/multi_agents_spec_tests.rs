@@ -93,6 +93,12 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         Some(true)
     );
     assert!(properties.contains_key("fork_turns"));
+    assert_eq!(
+        properties
+            .get("fork_turns")
+            .and_then(|schema| schema.description.as_deref()),
+        Some(SPAWN_AGENT_ROUTED_FORK_TURNS_DESCRIPTION)
+    );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
@@ -121,9 +127,11 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         parameters.required.as_ref(),
         Some(&vec!["task_name".to_string(), "message".to_string()])
     );
+    let output_schema = output_schema.expect("spawn_agent output schema");
+    assert_eq!(output_schema["required"], json!(["task_name", "nickname"]));
     assert_eq!(
-        output_schema.expect("spawn_agent output schema")["required"],
-        json!(["task_name", "nickname"])
+        output_schema["properties"]["route"]["required"],
+        json!(["taskName", "agentType", "model", "forkMode"])
     );
 }
 
@@ -244,6 +252,7 @@ fn spawn_agent_tool_keeps_model_controls_when_spawn_metadata_is_hidden() {
     let ToolSpec::Function(ResponsesApiTool {
         description,
         parameters,
+        output_schema,
         ..
     }) = tool
     else {
@@ -258,8 +267,23 @@ fn spawn_agent_tool_keeps_model_controls_when_spawn_metadata_is_hidden() {
     assert!(properties.contains_key("model"));
     assert!(properties.contains_key("reasoning_effort"));
     assert!(!properties.contains_key("service_tier"));
+    assert_eq!(
+        properties
+            .get("fork_turns")
+            .and_then(|schema| schema.description.as_deref()),
+        Some(SPAWN_AGENT_FORK_TURNS_DESCRIPTION)
+    );
     assert!(!description.contains(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE));
     assert!(description.contains("Available model overrides"));
+    assert_eq!(
+        output_schema.expect("spawn_agent output schema")["properties"],
+        json!({
+            "task_name": {
+                "type": "string",
+                "description": "Canonical task name for the spawned agent."
+            }
+        })
+    );
 }
 
 #[test]

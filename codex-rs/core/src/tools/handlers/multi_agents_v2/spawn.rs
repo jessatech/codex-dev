@@ -121,14 +121,19 @@ async fn handle_spawn_agent(
         apply_role_to_config(&mut config, role_name)
             .await
             .map_err(FunctionCallError::RespondToModel)?;
-        let routed_reasoning_effort = match pinned_effort.as_deref() {
-            Some(pinned_effort) => Some(
-                pinned_effort
-                    .parse()
-                    .map_err(FunctionCallError::RespondToModel)?,
-            ),
-            None => args.reasoning_effort.clone(),
-        };
+        if pinned_model.is_some()
+            && let Some(requested_model) = args.model.as_deref()
+        {
+            let mut validation_config = config.clone();
+            apply_requested_spawn_agent_model_overrides(
+                &session,
+                turn.as_ref(),
+                &mut validation_config,
+                Some(requested_model),
+                /*requested_reasoning_effort*/ None,
+            )
+            .await?;
+        }
         apply_requested_spawn_agent_model_overrides(
             &session,
             turn.as_ref(),
@@ -137,7 +142,10 @@ async fn handle_spawn_agent(
                 .is_none()
                 .then_some(args.model.as_deref())
                 .flatten(),
-            routed_reasoning_effort,
+            pinned_effort
+                .is_none()
+                .then_some(args.reasoning_effort.clone())
+                .flatten(),
         )
         .await?;
     }

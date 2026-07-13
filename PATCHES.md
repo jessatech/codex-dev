@@ -3,9 +3,10 @@
 Tracks every custom patch on this fork: rationale, upstream issue, files touched, and the likely
 rebase-conflict area when syncing with `openai/codex` upstream.
 
-- **Fork base:** `c888e8e75` ("Improve composer completion target resolution", #32628) — upstream sync. Originally cut from `9e552e9d1` (#32485); rebased forward on the sync. The synced commit is composer/TUI-only, with no file overlap with this stack, so the rebase was conflict-free and the stack re-validated green (fmt/clippy clean, `codex-core` + `codex-features` tests pass bar the 2 pre-existing env-only `shell_snapshot` failures).
+- **Current fork base:** `bbfa08fe3` ("Include connector IDs in MCP tool call analytics", #32867). The consolidated customization `70136efb` was replayed as `be86cc422`; the proposal commit `a4ade218f` was replayed as `6da71ab5b`.
+- **Historical development base:** `c888e8e75` ("Improve composer completion target resolution", #32628). The verified-base evidence below retains its original commit references so the audit trail remains reproducible.
 - **In-tree version:** `0.0.0-dev` (release version is stamped at build time).
-- **Branch:** `claude/subagent-routing-v2` (off `main`).
+- **Synchronization branch:** `codex/sync-openai-main-2026-07-13`.
 - **Owner:** Claude (engineering owner), for Jessica's engine/game swarm workflow.
 - **Toolchain:** rustup-managed `1.95.0` (matches `codex-rs/rust-toolchain.toml`); validate with `just fmt`, `just fix -p <crate>`, `just test -p <crate>`.
 
@@ -14,6 +15,16 @@ rebase-conflict area when syncing with `openai/codex` upstream.
 - Keep the hosted-reserved `collaboration.spawn_agent` schema byte-compatible; expanded controls ride a non-reserved namespace / config, never a mutated reserved schema.
 - Mechanism (routing correctness) is separate from policy (swarm strategy). Policy is data-driven and reconciled with Jessica's research doc (see Provenance).
 - Reproduce each defect against the base commit (failing test proven RED) before changing behavior.
+
+### Synchronization-only size exception
+
+The replayed history exceeds the normal 800-line review guideline because this branch preserves two
+already-reviewed fork commits as directed: the consolidated implementation (`70136efb`, replayed as
+`be86cc422`) and its orchestration proposal (`a4ade218f`, replayed as `6da71ab5b`). Splitting either
+replay would destroy the existing review and supersession boundary. The new synchronization work is
+kept as a separate integration commit: its focused conflict corrections are under the 500-line
+complex-logic target. Subsequent audited gaps remain separate milestone branches rather than being
+added to this synchronization replay.
 
 ---
 
@@ -61,6 +72,15 @@ if `agent_type`/`model`/`reasoning_effort` is explicitly set it resolves to a **
 (`fork_mode = None`) so the override is honored; with no routing override it keeps the inherited
 full-history default. Explicit `fork_turns` is unchanged: `none` => fresh, `all` => full history (still
 rejects overrides via `reject_full_fork_spawn_overrides`), positive int => partial.
+
+**Near-term context-handoff policy:** heterogeneous full-history forks are intentionally deferred.
+When a parent selects a different child role, model, or effort, it should use `fork_turns = "none"`
+and write a concise, task-specific context handoff in `message`: the objective, relevant paths or
+symbols, applicable constraints, established findings, and expected output. This preserves the cost
+and quality benefits of specialist routing without inheriting stale parent system/developer context
+or undertaking the larger prompt-cache and tool-surface work needed for safe routed full-history
+forks. Supporting `fork_turns = "all"` with a different route remains a future feature, not part of
+the current remediation milestones.
 
 - Files:
   - `core/src/tools/handlers/multi_agents_v2/spawn.rs` — `fork_mode` intent-aware default + doc.

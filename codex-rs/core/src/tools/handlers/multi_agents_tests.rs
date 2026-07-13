@@ -468,7 +468,7 @@ async fn multi_agent_v2_spawn_omitted_fork_with_route_creates_fresh_child() {
     let (content, _) = expect_text_output(output);
     let result: serde_json::Value =
         serde_json::from_str(&content).expect("spawn_agent result should be json");
-    assert_eq!(result["task_name"], "/root/routed_fresh_child");
+    assert_eq!(result, json!({"task_name": "/root/routed_fresh_child"}));
     let agent_id = manager
         .captured_ops()
         .into_iter()
@@ -662,6 +662,53 @@ async fn multi_agent_v2_strict_routing_rejects_model_conflicting_with_role_pin()
         matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("pins model") && msg.contains("gpt-5-role-override")),
         "unexpected error: {err:?}"
     );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_validates_explicit_model_matching_role_pin() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let role_name = install_role_with_model_override(&mut turn).await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread((*turn.config).clone())
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.thread_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.reject_route_substitution = true;
+    let turn = TurnContext {
+        config: Arc::new(config),
+        multi_agent_version: codex_protocol::protocol::MultiAgentVersion::V2,
+        ..turn
+    };
+
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "unavailable_pinned_model",
+                "agent_type": role_name,
+                "model": "gpt-5-role-override",
+                "fork_turns": "none"
+            })),
+        ))
+        .await
+        .err()
+        .expect("an explicit role-pinned model should still be backend-validated");
+
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(msg) if msg.contains("Unknown model `gpt-5-role-override`")),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(manager.list_thread_ids().await, vec![root.thread_id]);
 }
 
 #[tokio::test]

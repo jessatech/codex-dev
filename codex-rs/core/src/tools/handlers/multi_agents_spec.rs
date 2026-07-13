@@ -19,6 +19,8 @@ const SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION: &str =
     "Model override for the new agent. Omit unless an explicit override is needed.";
 const SPAWN_AGENT_SERVICE_TIER_OVERRIDE_DESCRIPTION: &str =
     "Service tier override for the new agent. Omit unless explicitly requested.";
+const SPAWN_AGENT_FORK_TURNS_DESCRIPTION: &str = "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns.";
+const SPAWN_AGENT_ROUTED_FORK_TURNS_DESCRIPTION: &str = "Optional number of turns to fork. Omission creates a fresh child when agent_type, model, or reasoning_effort is explicit; otherwise it defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns.";
 const MAX_REASONING_EFFORT_CHARS_IN_SPAWN_AGENT_DESCRIPTION: usize = 64;
 
 #[derive(Debug, Clone)]
@@ -100,7 +102,10 @@ pub fn create_spawn_agent_tool_v2(options: SpawnAgentToolOptions) -> ToolSpec {
     let inherited_model_guidance = (options.expose_spawn_agent_model_overrides
         && !options.hide_agent_type_model_reasoning)
         .then_some(SPAWN_AGENT_INHERITED_MODEL_GUIDANCE);
-    let mut properties = spawn_agent_common_properties_v2(&options.agent_type_description);
+    let mut properties = spawn_agent_common_properties_v2(
+        &options.agent_type_description,
+        !options.hide_agent_type_model_reasoning,
+    );
     if options.hide_agent_type_model_reasoning {
         properties.remove("agent_type");
         properties.remove("service_tier");
@@ -413,6 +418,25 @@ fn spawn_agent_output_schema_v2(hide_agent_metadata: bool) -> Value {
         });
     }
 
+    let routed_value_schema = json!({
+        "type": "object",
+        "properties": {
+            "value": { "type": "string" },
+            "source": {
+                "type": "string",
+                "enum": [
+                    "explicit_spawn_argument",
+                    "custom_agent_file",
+                    "parent_inheritance",
+                    "model_catalog_default",
+                    "client_default"
+                ]
+            }
+        },
+        "required": ["value", "source"],
+        "additionalProperties": false
+    });
+
     json!({
         "type": "object",
         "properties": {
@@ -423,6 +447,52 @@ fn spawn_agent_output_schema_v2(hide_agent_metadata: bool) -> Value {
             "nickname": {
                 "type": ["string", "null"],
                 "description": "User-facing nickname for the spawned agent when available."
+            },
+            "route": {
+                "type": "object",
+                "properties": {
+                    "taskName": { "type": "string" },
+                    "agentType": routed_value_schema,
+                    "model": routed_value_schema,
+                    "reasoningEffort": routed_value_schema,
+                    "serviceTier": routed_value_schema,
+                    "forkMode": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "const": "fresh" }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "const": "full_history" }
+                                },
+                                "required": ["kind"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "const": "last_n_turns" },
+                                    "turns": { "type": "integer", "minimum": 1 }
+                                },
+                                "required": ["kind", "turns"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    },
+                    "agentConfigPath": { "type": "string" },
+                    "warnings": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                },
+                "required": ["taskName", "agentType", "model", "forkMode"],
+                "additionalProperties": false
             }
         },
         "required": ["task_name", "nickname"],
@@ -613,7 +683,15 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
     ])
 }
 
-fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<String, JsonSchema> {
+fn spawn_agent_common_properties_v2(
+    agent_type_description: &str,
+    use_intent_aware_fork_description: bool,
+) -> BTreeMap<String, JsonSchema> {
+    let fork_turns_description = if use_intent_aware_fork_description {
+        SPAWN_AGENT_ROUTED_FORK_TURNS_DESCRIPTION
+    } else {
+        SPAWN_AGENT_FORK_TURNS_DESCRIPTION
+    };
     BTreeMap::from([
         (
             "message".to_string(),
@@ -628,16 +706,11 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         ),
         (
             "fork_turns".to_string(),
-            JsonSchema::string(Some(
-                "Optional number of turns to fork. Omission creates a fresh child when agent_type, model, or reasoning_effort is explicit; otherwise it defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
-                    .to_string(),
-            )),
+            JsonSchema::string(Some(fork_turns_description.to_string())),
         ),
         (
             "model".to_string(),
-            JsonSchema::string(Some(
-                SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION.to_string(),
-            )),
+            JsonSchema::string(Some(SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION.to_string())),
         ),
         (
             "reasoning_effort".to_string(),

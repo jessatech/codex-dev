@@ -75,6 +75,8 @@ In scope:
 Out of scope:
 
 - a new `features.multi_agent_v2.max_depth` key or a changed default/range;
+- heterogeneous full-history forks; routed specialists use `fork_turns = "none"` and receive a
+  concise task-specific context handoff in the spawn message;
 - derive/fork paths not owned by this spawn admission change (#30692);
 - sandbox narrowing and worktree/write-scope isolation;
 - custom-agent schema exposure and model catalog policy (#32782);
