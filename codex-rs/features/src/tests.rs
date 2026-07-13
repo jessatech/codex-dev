@@ -654,6 +654,7 @@ tool_namespace = "agents"
 hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = true
 non_code_mode_only = true
+max_total_spawns_per_root = 4
 "#,
     )
     .expect("features table should deserialize");
@@ -682,6 +683,7 @@ non_code_mode_only = true
             non_code_mode_only: Some(true),
             require_explicit_agent_type: None,
             reject_route_substitution: None,
+            max_total_spawns_per_root: Some(4),
         }))
     );
 }

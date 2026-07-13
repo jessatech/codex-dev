@@ -2,6 +2,7 @@ use super::*;
 use crate::ThreadManager;
 use crate::config::AgentRoleConfig;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
+use crate::config::DEFAULT_AGENT_MAX_THREADS;
 use crate::function_tool::FunctionCallError;
 use crate::init_state_db;
 use crate::local_agent_graph_store_from_state_db;
@@ -735,7 +736,8 @@ async fn multi_agent_v2_allows_sequential_children_without_lifetime_cap() {
     let session = Arc::new(session);
 
     let mut child_ids = HashSet::new();
-    for index in 0..6 {
+    let spawn_count = DEFAULT_AGENT_MAX_THREADS.expect("legacy default should be bounded") + 1;
+    for index in 0..spawn_count {
         let task_name = format!("worker_{index}");
         SpawnAgentHandlerV2::default()
             .handle(invocation(
@@ -764,7 +766,7 @@ async fn multi_agent_v2_allows_sequential_children_without_lifetime_cap() {
             .expect("child should close before the next spawn");
     }
 
-    assert_eq!(child_ids.len(), 6);
+    assert_eq!(child_ids.len(), spawn_count);
     assert_eq!(manager.list_thread_ids().await, vec![root.thread_id]);
 }
 

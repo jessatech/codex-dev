@@ -147,6 +147,7 @@ async fn v2_grandchild_request_omits_spawn_agent_at_depth_limit() -> Result<()> 
         grandchild_request.tool_by_name(MULTI_AGENT_V2_NAMESPACE, "spawn_agent"),
         None
     );
+    assert!(!grandchild_request.body_contains_text("spawn_agents_on_csv"));
     for tool_name in [
         "send_message",
         "followup_task",

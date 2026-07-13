@@ -161,9 +161,10 @@ config-layer rebuild internals), so it never false-rejects a role that doesn't p
 - Rebase risk: medium.
 - **Process note:** touching `features/` requires running the `codex-features` tests, not just `codex-core`.
 
-### C5c — shallow spawn policy — _in progress_ — deliverable 8
+### C5c — shallow spawn policy — _validated, ready to commit_ — deliverable 8
 Removes the unintended per-root lifetime spawn quota: completed children never consume a permanent
-budget. Lifetime usage is unbounded; the existing active-thread concurrency limiter remains authoritative.
+budget. The retired config key remains accepted but ignored for compatibility; lifetime usage is
+unbounded and the existing active-thread concurrency limiter remains authoritative.
 Multi-agent V2 uses a dedicated `features.multi_agent_v2.max_depth` setting (default **2**, minimum
 **1**, maximum **4**). At the default, the root can spawn a depth-one orchestrator and that
 orchestrator can spawn depth-two workers; maximum-depth worker schemas omit `spawn_agent`.

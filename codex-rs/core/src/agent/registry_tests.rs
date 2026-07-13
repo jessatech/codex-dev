@@ -70,54 +70,35 @@ fn non_thread_spawn_subagents_default_to_depth_zero() {
     ));
 }
 
+fn thread_spawn_source(depth: i32) -> SessionSource {
+    SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: ThreadId::new(),
+        depth,
+        agent_path: None,
+        agent_nickname: None,
+        agent_role: None,
+    })
+}
+
 #[test]
 fn multi_agent_v2_spawning_respects_the_configured_thread_spawn_depth() {
-    assert!(multi_agent_v2_spawning_enabled(
-        &SessionSource::Cli,
-        /*max_depth*/ 2
-    ));
-    assert!(multi_agent_v2_spawning_enabled(
-        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: ThreadId::new(),
-            depth: 1,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-        }),
-        /*max_depth*/ 2
-    ));
-    assert!(multi_agent_v2_spawning_enabled(
-        &SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: ThreadId::new(),
-            depth: 3,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-        }),
-        /*max_depth*/ 4
-    ));
-    for session_source in [
-        SessionSource::SubAgent(SubAgentSource::Review),
-        SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string())),
-        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: ThreadId::new(),
-            depth: 0,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-        }),
-        SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-            parent_thread_id: ThreadId::new(),
-            depth: 2,
-            agent_path: None,
-            agent_nickname: None,
-            agent_role: None,
-        }),
+    for (session_source, max_depth, expected) in [
+        (SessionSource::Cli, 2, true),
+        (thread_spawn_source(1), 2, true),
+        (thread_spawn_source(3), 4, true),
+        (SessionSource::SubAgent(SubAgentSource::Review), 2, false),
+        (
+            SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string())),
+            2,
+            false,
+        ),
+        (thread_spawn_source(0), 2, false),
+        (thread_spawn_source(2), 2, false),
     ] {
-        assert!(!multi_agent_v2_spawning_enabled(
-            &session_source,
-            /*max_depth*/ 2
-        ));
+        assert_eq!(
+            multi_agent_v2_spawning_enabled(&session_source, max_depth),
+            expected
+        );
     }
 }
 
