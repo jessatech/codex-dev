@@ -113,6 +113,12 @@ Desired properties:
 - independent role/model/effort selection at every allowed edge; and
 - durable, inspectable identities, routes, admission state, and completion delivery.
 
+The near-term heterogeneous-routing contract uses a fresh child (`fork_turns = "none"`). The parent
+provides only the context the specialist needs in a concise spawn message: objective, relevant paths
+or symbols, constraints, established findings, and expected output. Allowing a differently routed
+child to inherit the parent's complete history is a larger prompt-cache, instruction, and tool-surface
+feature and is intentionally deferred.
+
 This is not a request for unlimited recursive swarms. The goal is predictable delegation whose
 tree shape, cost, and authority remain bounded.
 

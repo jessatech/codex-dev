@@ -55,6 +55,33 @@ fn explicit_model_records_argument_source_without_warning() {
 }
 
 #[test]
+fn substituted_role_values_report_role_provenance() {
+    let mut req = request("routing_probe");
+    req.agent_config_path = Some("/home/j/.codex/agents/routing_probe.toml".to_string());
+    req.requested_reasoning_effort = Some(ReasoningEffort::High);
+    req.requested_service_tier = Some("priority".to_string());
+    let route = ResolvedSubagentRoute::resolve(
+        req,
+        EffectiveRoute {
+            model: "gpt-5-role-override".to_string(),
+            reasoning_effort: Some(ReasoningEffort::Minimal),
+            service_tier: Some("flex".to_string()),
+        },
+        parent(),
+    );
+
+    assert_eq!(
+        route.reasoning_effort.expect("effort present").source,
+        RouteSource::CustomAgentFile
+    );
+    assert_eq!(
+        route.service_tier.expect("service tier present").source,
+        RouteSource::CustomAgentFile
+    );
+    assert_eq!(route.warnings.len(), 2);
+}
+
+#[test]
 fn explicit_model_mismatch_is_flagged_as_silent_substitution() {
     let mut req = request("default");
     req.requested_model = Some("gpt-5.6-terra".to_string());
@@ -64,7 +91,7 @@ fn explicit_model_mismatch_is_flagged_as_silent_substitution() {
         parent(),
     );
 
-    assert_eq!(route.model.source, RouteSource::ExplicitSpawnArgument);
+    assert_eq!(route.model.source, RouteSource::ParentInheritance);
     assert_eq!(route.warnings.len(), 1);
     assert!(route.warnings[0].contains("gpt-5.6-terra"));
     assert!(route.warnings[0].contains("gpt-5.6-sol"));

@@ -127,57 +127,64 @@ impl ResolvedSubagentRoute {
         };
         let agent_type = RoutedValue::new(request.role_name, agent_type_source);
 
-        let model_source = if let Some(requested) = request.requested_model.as_deref() {
-            if requested != effective.model {
+        let resolved_model_source = if effective.model == parent.model {
+            RouteSource::ParentInheritance
+        } else if role_applied {
+            RouteSource::CustomAgentFile
+        } else {
+            RouteSource::ModelCatalogDefault
+        };
+        let model_source = match request.requested_model.as_deref() {
+            Some(requested) if requested == effective.model => RouteSource::ExplicitSpawnArgument,
+            Some(requested) => {
                 warnings.push(format!(
                     "requested model `{requested}` but the child resolved to `{}`",
                     effective.model
                 ));
+                resolved_model_source
             }
-            RouteSource::ExplicitSpawnArgument
-        } else if effective.model != parent.model {
-            if role_applied {
-                RouteSource::CustomAgentFile
-            } else {
-                RouteSource::ModelCatalogDefault
-            }
-        } else {
-            RouteSource::ParentInheritance
+            None => resolved_model_source,
         };
         let model = RoutedValue::new(effective.model, model_source);
 
         let reasoning_effort = effective.reasoning_effort.map(|effort| {
-            let source = if let Some(requested) = request.requested_reasoning_effort.as_ref() {
-                if *requested != effort {
+            let resolved_source = if Some(&effort) == parent.reasoning_effort.as_ref() {
+                RouteSource::ParentInheritance
+            } else if role_applied {
+                RouteSource::CustomAgentFile
+            } else {
+                RouteSource::ModelCatalogDefault
+            };
+            let source = match request.requested_reasoning_effort.as_ref() {
+                Some(requested) if *requested == effort => RouteSource::ExplicitSpawnArgument,
+                Some(requested) => {
                     warnings.push(format!(
                         "requested reasoning effort `{requested}` but the child resolved to `{effort}`"
                     ));
+                    resolved_source
                 }
-                RouteSource::ExplicitSpawnArgument
-            } else if Some(&effort) != parent.reasoning_effort.as_ref() {
-                if role_applied {
-                    RouteSource::CustomAgentFile
-                } else {
-                    RouteSource::ModelCatalogDefault
-                }
-            } else {
-                RouteSource::ParentInheritance
+                None => resolved_source,
             };
             RoutedValue::new(effort, source)
         });
 
         let service_tier = effective.service_tier.map(|tier| {
-            let source = if let Some(requested) = request.requested_service_tier.as_deref() {
-                if requested != tier {
+            let resolved_source = if Some(&tier) == parent.service_tier.as_ref() {
+                RouteSource::ParentInheritance
+            } else if role_applied {
+                RouteSource::CustomAgentFile
+            } else {
+                RouteSource::ModelCatalogDefault
+            };
+            let source = match request.requested_service_tier.as_deref() {
+                Some(requested) if requested == tier => RouteSource::ExplicitSpawnArgument,
+                Some(requested) => {
                     warnings.push(format!(
                         "requested service tier `{requested}` but the child resolved to `{tier}`"
                     ));
+                    resolved_source
                 }
-                RouteSource::ExplicitSpawnArgument
-            } else if role_applied && Some(&tier) != parent.service_tier.as_ref() {
-                RouteSource::CustomAgentFile
-            } else {
-                RouteSource::ParentInheritance
+                None => resolved_source,
             };
             RoutedValue::new(tier, source)
         });
