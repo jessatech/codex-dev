@@ -76,6 +76,27 @@ pub(crate) fn exceeds_thread_spawn_depth_limit(depth: i32, max_depth: i32) -> bo
     depth > max_depth
 }
 
+/// Multi-agent V2 allows thread-spawn subagents to fan out until the configured maximum depth.
+/// Specialized internal subagents do not participate in that hierarchy and cannot fan out.
+pub(crate) fn multi_agent_v2_spawning_enabled(
+    session_source: &SessionSource,
+    max_depth: i32,
+) -> bool {
+    match session_source {
+        SessionSource::SubAgent(SubAgentSource::ThreadSpawn { depth, .. }) => {
+            *depth >= 1 && *depth < max_depth
+        }
+        SessionSource::SubAgent(_) => false,
+        SessionSource::Cli
+        | SessionSource::VSCode
+        | SessionSource::Exec
+        | SessionSource::Mcp
+        | SessionSource::Custom(_)
+        | SessionSource::Internal(_)
+        | SessionSource::Unknown => true,
+    }
+}
+
 impl AgentRegistry {
     pub(crate) fn reserve_spawn_slot(
         self: &Arc<Self>,

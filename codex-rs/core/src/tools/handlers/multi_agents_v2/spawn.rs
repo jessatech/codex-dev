@@ -1,9 +1,16 @@
+use super::resolved_route::EffectiveRoute;
+use super::resolved_route::ParentBaseline;
+use super::resolved_route::ResolvedSubagentRoute;
+use super::resolved_route::RouteRequest;
 use super::*;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
+use crate::agent::multi_agent_v2_spawning_enabled;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::agent::role::resolve_role_config;
+use crate::agent::role::role_pinned_model_and_effort;
 use crate::agent_communication::AgentCommunicationContext;
 use crate::agent_communication::AgentCommunicationKind;
 use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
@@ -50,15 +57,55 @@ async fn handle_spawn_agent(
     let arguments = function_arguments(payload)?;
     let args: SpawnAgentArgs = parse_arguments(&arguments)?;
     let fork_mode = args.fork_mode()?;
+    let session_source = turn.session_source.clone();
+    let child_depth = next_thread_spawn_depth(&session_source);
+    if !multi_agent_v2_spawning_enabled(&session_source, turn.config.multi_agent_v2.max_depth) {
+        return Err(FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string(),
+        ));
+    }
     let role_name = args
         .agent_type
         .as_deref()
         .map(str::trim)
         .filter(|role| !role.is_empty());
 
+    if role_name.is_none() && turn.config.multi_agent_v2.require_explicit_agent_type {
+        return Err(FunctionCallError::RespondToModel(
+            "strict routing requires an explicit agent_type; specify a role instead of relying on \
+             the inherited default"
+                .to_string(),
+        ));
+    }
+
+    let resolved_role_name = role_name.unwrap_or(DEFAULT_ROLE_NAME);
+    let (pinned_model, pinned_effort) =
+        resolve_role_config(turn.config.as_ref(), resolved_role_name)
+            .map(role_pinned_model_and_effort)
+            .unwrap_or_default();
+    if turn.config.multi_agent_v2.reject_route_substitution {
+        if let (Some(requested), Some(pinned)) = (args.model.as_deref(), pinned_model.as_deref())
+            && requested != pinned
+        {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "strict routing: role `{resolved_role_name}` pins model `{pinned}` and cannot honor the requested \
+                 model `{requested}`"
+            )));
+        }
+        if let (Some(requested), Some(pinned)) =
+            (args.reasoning_effort.as_ref(), pinned_effort.as_deref())
+            && !requested.as_str().eq_ignore_ascii_case(pinned)
+        {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "strict routing: role `{}` pins reasoning effort `{pinned}` and cannot honor the \
+                 requested effort `{}`",
+                resolved_role_name,
+                requested.as_str()
+            )));
+        }
+    }
+
     let message = message_content(args.message)?;
-    let session_source = turn.session_source.clone();
-    let child_depth = next_thread_spawn_depth(&session_source);
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
     if let Some(service_tier) = args.service_tier.as_ref() {
@@ -71,17 +118,28 @@ async fn handle_spawn_agent(
             args.reasoning_effort.clone(),
         )?;
     } else {
+        apply_role_to_config(&mut config, role_name)
+            .await
+            .map_err(FunctionCallError::RespondToModel)?;
+        let routed_reasoning_effort = match pinned_effort.as_deref() {
+            Some(pinned_effort) => Some(
+                pinned_effort
+                    .parse()
+                    .map_err(FunctionCallError::RespondToModel)?,
+            ),
+            None => args.reasoning_effort.clone(),
+        };
         apply_requested_spawn_agent_model_overrides(
             &session,
             turn.as_ref(),
             &mut config,
-            args.model.as_deref(),
-            args.reasoning_effort.clone(),
+            pinned_model
+                .is_none()
+                .then_some(args.model.as_deref())
+                .flatten(),
+            routed_reasoning_effort,
         )
         .await?;
-        apply_role_to_config(&mut config, role_name)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
     }
     apply_spawn_agent_service_tier(
         &session,
@@ -91,6 +149,30 @@ async fn handle_spawn_agent(
     )
     .await?;
     apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
+
+    // Capture the requested route and parent baseline before `config` and `fork_mode` are consumed
+    // by the spawn, so the effective route (read from the child snapshot below) can be reported
+    // with provenance.
+    let route_request = RouteRequest {
+        task_name: args.task_name.clone(),
+        role_name: resolved_role_name.to_string(),
+        agent_type_explicit: role_name.is_some(),
+        agent_config_path: resolve_role_config(turn.config.as_ref(), resolved_role_name)
+            .and_then(|role| role.config_file.as_ref())
+            .map(|path| path.display().to_string()),
+        requested_model: args.model.clone(),
+        requested_reasoning_effort: args.reasoning_effort.clone(),
+        requested_service_tier: args.service_tier.clone(),
+        fork_mode: fork_mode.clone(),
+    };
+    let parent_baseline = ParentBaseline {
+        model: turn.model_info.slug.clone(),
+        reasoning_effort: turn
+            .reasoning_effort
+            .clone()
+            .or_else(|| turn.model_info.default_reasoning_level.clone()),
+        service_tier: turn.config.service_tier.clone(),
+    };
 
     let spawn_source = thread_spawn_source(
         session.thread_id,
@@ -139,6 +221,17 @@ async fn handle_spawn_agent(
         .as_ref()
         .and_then(|snapshot| snapshot.session_source.get_nickname())
         .or(spawned_agent.metadata.agent_nickname);
+    let resolved_route = agent_snapshot.as_ref().map(|snapshot| {
+        ResolvedSubagentRoute::resolve(
+            route_request,
+            EffectiveRoute {
+                model: snapshot.model.clone(),
+                reasoning_effort: snapshot.reasoning_effort.clone(),
+                service_tier: snapshot.service_tier.clone(),
+            },
+            parent_baseline,
+        )
+    });
     emit_sub_agent_activity(
         &session,
         &turn,
@@ -165,6 +258,7 @@ async fn handle_spawn_agent(
         Ok(SpawnAgentResult::WithNickname {
             task_name,
             nickname,
+            route: resolved_route.map(Box::new),
         })
     }
 }
@@ -189,6 +283,14 @@ struct SpawnAgentArgs {
 }
 
 impl SpawnAgentArgs {
+    /// Resolves the requested context-fork mode.
+    ///
+    /// An explicit `fork_turns` is honored literally: `none` => fresh child, `all` => full
+    /// history, positive integer => partial history. When `fork_turns` is omitted or blank the
+    /// default is intent-aware: a spawn that explicitly requests a role, model, or reasoning
+    /// effort resolves to a fresh child (so those overrides are honored instead of being rejected
+    /// by `reject_full_fork_spawn_overrides`), while a spawn with no routing override keeps the
+    /// inherited full-history default.
     fn fork_mode(&self) -> Result<Option<SpawnAgentForkMode>, FunctionCallError> {
         if self.fork_context.is_some() {
             return Err(FunctionCallError::RespondToModel(
@@ -196,12 +298,28 @@ impl SpawnAgentArgs {
             ));
         }
 
-        let fork_turns = self
+        let explicit_fork_turns = self
             .fork_turns
             .as_deref()
             .map(str::trim)
-            .filter(|fork_turns| !fork_turns.is_empty())
-            .unwrap_or("all");
+            .filter(|fork_turns| !fork_turns.is_empty());
+
+        let Some(fork_turns) = explicit_fork_turns else {
+            let non_blank = |value: &Option<String>| {
+                value
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+            };
+            let has_routing_override = non_blank(&self.agent_type)
+                || non_blank(&self.model)
+                || self.reasoning_effort.is_some();
+            return Ok(if has_routing_override {
+                None
+            } else {
+                Some(SpawnAgentForkMode::FullHistory)
+            });
+        };
 
         if fork_turns.eq_ignore_ascii_case("none") {
             return Ok(None);
@@ -231,6 +349,8 @@ pub(crate) enum SpawnAgentResult {
     WithNickname {
         task_name: String,
         nickname: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        route: Option<Box<ResolvedSubagentRoute>>,
     },
     HiddenMetadata {
         task_name: String,
@@ -254,3 +374,7 @@ impl ToolOutput for SpawnAgentResult {
         tool_output_code_mode_result(self, "spawn_agent")
     }
 }
+
+#[cfg(test)]
+#[path = "spawn_tests.rs"]
+mod spawn_tests;

@@ -47,7 +47,7 @@
           "type": "integer"
         },
         "max_depth": {
-          "description": "Maximum nesting depth allowed for spawned agent threads. Root sessions start at depth 0.",
+          "description": "Maximum nesting depth allowed for legacy multi-agent threads. Root sessions start at depth 0. Multi-agent V2 uses `features.multi_agent_v2.max_depth` instead.",
           "format": "int32",
           "minimum": 1.0,
           "type": "integer"
@@ -1742,6 +1742,13 @@
           "minimum": 1.0,
           "type": "integer"
         },
+        "max_depth": {
+          "description": "Maximum V2 thread-spawn nesting depth. Root sessions are depth zero.",
+          "format": "int32",
+          "maximum": 4.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
         "max_wait_timeout_ms": {
           "format": "int64",
           "maximum": 3600000.0,
@@ -1758,6 +1765,14 @@
           "type": "string"
         },
         "non_code_mode_only": {
+          "type": "boolean"
+        },
+        "reject_route_substitution": {
+          "description": "When true, a spawn whose explicit `model`/`reasoning_effort` conflicts with the selected role's pinned value is rejected before a child thread is created.",
+          "type": "boolean"
+        },
+        "require_explicit_agent_type": {
+          "description": "When true, `spawn_agent` must specify an explicit `agent_type`; an omitted role is rejected before a child thread is created.",
           "type": "boolean"
         },
         "root_agent_usage_hint_text": {

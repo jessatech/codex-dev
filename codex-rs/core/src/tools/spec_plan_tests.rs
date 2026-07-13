@@ -8,6 +8,7 @@ use codex_mcp::ToolInfo;
 use codex_model_provider::create_model_provider;
 use codex_model_provider_info::AMAZON_BEDROCK_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_protocol::ThreadId;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::openai_models::ApplyPatchToolType;
@@ -1428,6 +1429,63 @@ async fn multi_agent_v2_can_use_configured_tool_namespace() {
             "expected {tool_name} in agents namespace"
         );
     }
+}
+
+#[tokio::test]
+async fn multi_agent_v2_depth_limited_grandchild_keeps_only_management_tools() {
+    let plan = probe(|turn| {
+        set_feature(turn, Feature::MultiAgentV2, /*enabled*/ true);
+        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
+        update_config(turn, |config| {
+            config.agent_max_depth = 3;
+            config.multi_agent_v2.max_depth = 2;
+        });
+        turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 2,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        });
+    })
+    .await;
+
+    assert_eq!(
+        plan.namespace_function_names(MULTI_AGENT_V2_NAMESPACE),
+        [
+            "followup_task",
+            "interrupt_agent",
+            "list_agents",
+            "send_message",
+            "wait_agent",
+        ]
+    );
+    assert!(
+        !plan
+            .registered_names
+            .contains(&ToolName::namespaced(MULTI_AGENT_V2_NAMESPACE, "spawn_agent").to_string()),
+        "depth-limited grandchildren must not register spawn_agent"
+    );
+    plan.assert_visible_lacks(&["spawn_agents_on_csv"]);
+}
+
+#[tokio::test]
+async fn multi_agent_v2_job_worker_keeps_report_tool_without_spawning_tools() {
+    let plan = probe(|turn| {
+        set_feature(turn, Feature::MultiAgentV2, /*enabled*/ true);
+        set_feature(turn, Feature::SpawnCsv, /*enabled*/ true);
+        turn.session_source =
+            SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string()));
+    })
+    .await;
+
+    plan.assert_visible_contains(&["report_agent_job_result"]);
+    plan.assert_visible_lacks(&["spawn_agents_on_csv"]);
+    assert!(
+        !plan
+            .namespace_function_names(MULTI_AGENT_V2_NAMESPACE)
+            .contains(&"spawn_agent".to_string())
+    );
 }
 
 #[tokio::test]

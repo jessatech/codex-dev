@@ -682,8 +682,8 @@ pub struct AgentsToml {
     /// When unset, no limit is enforced.
     #[schemars(range(min = 1))]
     pub max_threads: Option<usize>,
-    /// Maximum nesting depth allowed for spawned agent threads.
-    /// Root sessions start at depth 0.
+    /// Maximum nesting depth allowed for legacy multi-agent threads. Root sessions start at depth
+    /// 0. Multi-agent V2 uses `features.multi_agent_v2.max_depth` instead.
     #[schemars(range(min = 1))]
     pub max_depth: Option<i32>,
     /// Default maximum runtime in seconds for agent job workers.

@@ -271,9 +271,18 @@ pub(crate) async fn apply_requested_spawn_agent_model_overrides(
     }
 
     if let Some(reasoning_effort) = requested_reasoning_effort {
+        let selected_model_name = config
+            .model
+            .as_deref()
+            .unwrap_or(turn.model_info.slug.as_str());
+        let selected_model_info = session
+            .services
+            .models_manager
+            .get_model_info(selected_model_name, &config.to_models_manager_config())
+            .await;
         validate_spawn_agent_reasoning_effort(
-            &turn.model_info.slug,
-            &turn.model_info.supported_reasoning_levels,
+            selected_model_name,
+            &selected_model_info.supported_reasoning_levels,
             &reasoning_effort,
         )?;
         config.model_reasoning_effort = Some(reasoning_effort);

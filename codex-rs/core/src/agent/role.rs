@@ -126,6 +126,37 @@ pub(crate) fn resolve_role_config<'a>(
         .or_else(|| built_in::configs().get(role_name))
 }
 
+/// Returns the `model` and `model_reasoning_effort` that a role file pins, if any.
+///
+/// Reads the role's config file (built-in or user-defined) the same way the spawn-tool description
+/// does. Used by strict routing to detect a conflict between an explicitly requested model/effort
+/// and a role that pins its own value.
+pub(crate) fn role_pinned_model_and_effort(
+    role: &AgentRoleConfig,
+) -> (Option<String>, Option<String>) {
+    let Some(config_file) = role.config_file.as_ref() else {
+        return (None, None);
+    };
+    let contents = built_in::config_file_contents(config_file)
+        .map(str::to_owned)
+        .or_else(|| std::fs::read_to_string(config_file).ok());
+    let Some(contents) = contents else {
+        return (None, None);
+    };
+    let Ok(role_toml) = toml::from_str::<TomlValue>(&contents) else {
+        return (None, None);
+    };
+    let model = role_toml
+        .get("model")
+        .and_then(TomlValue::as_str)
+        .map(str::to_owned);
+    let reasoning_effort = role_toml
+        .get("model_reasoning_effort")
+        .and_then(TomlValue::as_str)
+        .map(str::to_owned);
+    (model, reasoning_effort)
+}
+
 mod reload {
     use super::*;
 
