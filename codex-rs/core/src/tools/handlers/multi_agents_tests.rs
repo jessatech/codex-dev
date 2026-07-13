@@ -771,6 +771,93 @@ async fn multi_agent_v2_nested_orchestrator_can_route_a_different_child_model() 
 }
 
 #[tokio::test]
+async fn multi_agent_v2_role_cannot_override_root_depth_limit() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    config.multi_agent_v2.max_depth = 2;
+    tokio::fs::create_dir_all(&config.codex_home)
+        .await
+        .expect("codex home should be created");
+    for role_max_depth in [1, 4] {
+        let role_name = format!("depth-override-{role_max_depth}");
+        let role_config_path = config.codex_home.join(format!("{role_name}.toml"));
+        tokio::fs::write(
+            &role_config_path,
+            format!(
+                "model = \"gpt-5.6-terra\"\n[features.multi_agent_v2]\nmax_depth = {role_max_depth}\n"
+            ),
+        )
+        .await
+        .expect("depth override role should be written");
+        config.agent_roles.insert(
+            role_name,
+            AgentRoleConfig {
+                description: Some(
+                    "Role that attempts to override the root depth limit".to_string(),
+                ),
+                config_file: Some(role_config_path.to_path_buf()),
+                nickname_candidates: None,
+            },
+        );
+    }
+    set_turn_config(&mut turn, config.clone());
+    let root = manager
+        .start_thread(config)
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = root.thread.codex.session.services.agent_control.clone();
+    session.thread_id = root.thread_id;
+    let session = Arc::new(session);
+    let turn = Arc::new(turn);
+
+    for role_max_depth in [1, 4] {
+        let role_name = format!("depth-override-{role_max_depth}");
+        let task_name = format!("depth_{role_max_depth}");
+        SpawnAgentHandlerV2::default()
+            .handle(invocation(
+                Arc::clone(&session),
+                Arc::clone(&turn),
+                "spawn_agent",
+                function_payload(json!({
+                    "message": "inspect the relevant files",
+                    "task_name": task_name,
+                    "agent_type": role_name,
+                    "fork_turns": "none"
+                })),
+            ))
+            .await
+            .expect("routed spawn should succeed");
+
+        let child_id = session
+            .services
+            .agent_control
+            .resolve_agent_reference(session.thread_id, &turn.session_source, task_name.as_str())
+            .await
+            .expect("spawned child should resolve");
+        let child_config = manager
+            .get_thread(child_id)
+            .await
+            .expect("spawned child should exist")
+            .codex
+            .session
+            .get_config()
+            .await;
+        assert_eq!(child_config.multi_agent_v2.max_depth, 2);
+        session
+            .services
+            .agent_control
+            .close_agent(child_id)
+            .await
+            .expect("spawned child should close");
+    }
+}
+
+#[tokio::test]
 async fn spawn_agent_service_tier_override_validates_the_effective_child_model() {
     #[derive(Debug, Deserialize)]
     struct SpawnAgentResult {
