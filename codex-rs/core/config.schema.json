@@ -47,7 +47,7 @@
           "type": "integer"
         },
         "max_depth": {
-          "description": "Maximum nesting depth allowed for spawned agent threads. Root sessions start at depth 0.",
+          "description": "Maximum nesting depth allowed for legacy multi-agent threads. Root sessions start at depth 0. Multi-agent V2 uses `features.multi_agent_v2.max_depth` instead.",
           "format": "int32",
           "minimum": 1.0,
           "type": "integer"
@@ -1742,10 +1742,11 @@
           "minimum": 1.0,
           "type": "integer"
         },
-        "max_total_spawns_per_root": {
-          "description": "Maximum number of sub-agents that may be spawned under one root thread (lifetime, not concurrent). When set, a spawn beyond this budget is rejected before a child is created.",
-          "format": "uint",
-          "minimum": 0.0,
+        "max_depth": {
+          "description": "Maximum V2 thread-spawn nesting depth. Root sessions are depth zero.",
+          "format": "int32",
+          "maximum": 4.0,
+          "minimum": 1.0,
           "type": "integer"
         },
         "max_wait_timeout_ms": {

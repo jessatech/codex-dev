@@ -1,6 +1,30 @@
 use super::*;
+use crate::session::tests::make_session_and_context;
+use codex_protocol::protocol::MultiAgentVersion;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::sync::Arc;
+
+#[tokio::test]
+async fn spawn_agents_on_csv_rejects_multi_agent_v2_subagents() {
+    let (session, mut turn) = make_session_and_context().await;
+    turn.multi_agent_version = MultiAgentVersion::V2;
+    turn.session_source =
+        SessionSource::SubAgent(SubAgentSource::Other("agent_job:42".to_string()));
+
+    let err = spawn_agents_on_csv::handle(Arc::new(session), Arc::new(turn), "{}".to_string())
+        .await
+        .err()
+        .expect("multi-agent v2 subagent fan-out should be rejected");
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string()
+        )
+    );
+}
 
 #[test]
 fn parse_csv_supports_quotes_and_commas() {

@@ -5,6 +5,7 @@ use super::resolved_route::RouteRequest;
 use super::*;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
+use crate::agent::multi_agent_v2_spawning_enabled;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
@@ -56,6 +57,13 @@ async fn handle_spawn_agent(
     let arguments = function_arguments(payload)?;
     let args: SpawnAgentArgs = parse_arguments(&arguments)?;
     let fork_mode = args.fork_mode()?;
+    let session_source = turn.session_source.clone();
+    let child_depth = next_thread_spawn_depth(&session_source);
+    if !multi_agent_v2_spawning_enabled(&session_source, turn.config.multi_agent_v2.max_depth) {
+        return Err(FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string(),
+        ));
+    }
     let role_name = args
         .agent_type
         .as_deref()
@@ -70,18 +78,18 @@ async fn handle_spawn_agent(
         ));
     }
 
-    if turn.config.multi_agent_v2.reject_route_substitution
-        && let Some(role) =
-            role_name.and_then(|name| resolve_role_config(turn.config.as_ref(), name))
-    {
-        let (pinned_model, pinned_effort) = role_pinned_model_and_effort(role);
+    let resolved_role_name = role_name.unwrap_or(DEFAULT_ROLE_NAME);
+    let (pinned_model, pinned_effort) =
+        resolve_role_config(turn.config.as_ref(), resolved_role_name)
+            .map(role_pinned_model_and_effort)
+            .unwrap_or_default();
+    if turn.config.multi_agent_v2.reject_route_substitution {
         if let (Some(requested), Some(pinned)) = (args.model.as_deref(), pinned_model.as_deref())
             && requested != pinned
         {
             return Err(FunctionCallError::RespondToModel(format!(
-                "strict routing: role `{}` pins model `{pinned}` and cannot honor the requested \
-                 model `{requested}`",
-                role_name.unwrap_or(DEFAULT_ROLE_NAME)
+                "strict routing: role `{resolved_role_name}` pins model `{pinned}` and cannot honor the requested \
+                 model `{requested}`"
             )));
         }
         if let (Some(requested), Some(pinned)) =
@@ -91,24 +99,13 @@ async fn handle_spawn_agent(
             return Err(FunctionCallError::RespondToModel(format!(
                 "strict routing: role `{}` pins reasoning effort `{pinned}` and cannot honor the \
                  requested effort `{}`",
-                role_name.unwrap_or(DEFAULT_ROLE_NAME),
+                resolved_role_name,
                 requested.as_str()
             )));
         }
     }
 
-    if let Some(cap) = turn.config.multi_agent_v2.max_total_spawns_per_root
-        && session.services.agent_control.spawns_used() >= cap
-    {
-        return Err(FunctionCallError::RespondToModel(format!(
-            "spawn budget reached: this root has already spawned {cap} agent(s) \
-             (features.multi_agent_v2.max_total_spawns_per_root)"
-        )));
-    }
-
     let message = message_content(args.message)?;
-    let session_source = turn.session_source.clone();
-    let child_depth = next_thread_spawn_depth(&session_source);
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
     if let Some(service_tier) = args.service_tier.as_ref() {
@@ -121,17 +118,28 @@ async fn handle_spawn_agent(
             args.reasoning_effort.clone(),
         )?;
     } else {
+        apply_role_to_config(&mut config, role_name)
+            .await
+            .map_err(FunctionCallError::RespondToModel)?;
+        let routed_reasoning_effort = match pinned_effort.as_deref() {
+            Some(pinned_effort) => Some(
+                pinned_effort
+                    .parse()
+                    .map_err(FunctionCallError::RespondToModel)?,
+            ),
+            None => args.reasoning_effort.clone(),
+        };
         apply_requested_spawn_agent_model_overrides(
             &session,
             turn.as_ref(),
             &mut config,
-            args.model.as_deref(),
-            args.reasoning_effort.clone(),
+            pinned_model
+                .is_none()
+                .then_some(args.model.as_deref())
+                .flatten(),
+            routed_reasoning_effort,
         )
         .await?;
-        apply_role_to_config(&mut config, role_name)
-            .await
-            .map_err(FunctionCallError::RespondToModel)?;
     }
     apply_spawn_agent_service_tier(
         &session,
@@ -145,7 +153,6 @@ async fn handle_spawn_agent(
     // Capture the requested route and parent baseline before `config` and `fork_mode` are consumed
     // by the spawn, so the effective route (read from the child snapshot below) can be reported
     // with provenance.
-    let resolved_role_name = role_name.unwrap_or(DEFAULT_ROLE_NAME);
     let route_request = RouteRequest {
         task_name: args.task_name.clone(),
         role_name: resolved_role_name.to_string(),
@@ -205,7 +212,6 @@ async fn handle_spawn_agent(
     .await
     .map_err(collab_spawn_error)?;
     let new_thread_id = spawned_agent.thread_id;
-    session.services.agent_control.record_spawn();
     let agent_snapshot = session
         .services
         .agent_control
