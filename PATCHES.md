@@ -3,7 +3,7 @@
 Tracks every custom patch on this fork: rationale, upstream issue, files touched, and the likely
 rebase-conflict area when syncing with `openai/codex` upstream.
 
-- **Fork base:** `openai/codex` @ `9e552e9d15ba52bed7077d5357f3e18e330f8f38` (2026-07-11, "Use available width for skill names in the toggle view", #32485).
+- **Fork base:** `c888e8e75` ("Improve composer completion target resolution", #32628) — upstream sync. Originally cut from `9e552e9d1` (#32485); rebased forward on the sync. The synced commit is composer/TUI-only, with no file overlap with this stack, so the rebase was conflict-free and the stack re-validated green (fmt/clippy clean, `codex-core` + `codex-features` tests pass bar the 2 pre-existing env-only `shell_snapshot` failures).
 - **In-tree version:** `0.0.0-dev` (release version is stamped at build time).
 - **Branch:** `claude/subagent-routing-v2` (off `main`).
 - **Owner:** Claude (engineering owner), for Jessica's engine/game swarm workflow.
