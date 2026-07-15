@@ -10413,7 +10413,6 @@ tool_namespace = "agents"
 hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = false
 non_code_mode_only = true
-max_total_spawns_per_root = 1
 "#,
     )?;
 
