@@ -249,3 +249,12 @@ Supersedes the header's "Current fork base" line (retained above unedited, per a
   stamp); upstream SQLite thread-history (#32896/#32923/#32928) overlaps planned C3 — reconcile
   before C3 work begins; #33109 exposes a pre-existing unguarded paginated-parent fork path
   (tracked separately).
+
+### Removal — `max_total_spawns_per_root` (2026-07-14)
+
+Executes the correction ruling above: the retired lifetime-quota key is removed rather than
+restored (Jess's recommendation; Fable concurs). `MultiAgentV2ConfigToml` is `deny_unknown_fields`,
+so configs still setting the key now fail to parse, with the error pointing at the
+`[features.multi_agent_v2]` table (serde's untagged-enum error does not name individual fields) —
+deliberate loud breakage, covered by `multi_agent_v2_rejects_retired_lifetime_quota_key`. The active-thread
+concurrency limiter and `features.multi_agent_v2.max_depth` remain the authoritative bounds.

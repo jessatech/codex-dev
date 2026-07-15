@@ -654,7 +654,6 @@ tool_namespace = "agents"
 hide_spawn_agent_metadata = true
 expose_spawn_agent_model_overrides = true
 non_code_mode_only = true
-max_total_spawns_per_root = 4
 "#,
     )
     .expect("features table should deserialize");
@@ -683,8 +682,23 @@ max_total_spawns_per_root = 4
             non_code_mode_only: Some(true),
             require_explicit_agent_type: None,
             reject_route_substitution: None,
-            max_total_spawns_per_root: Some(4),
         }))
+    );
+}
+
+#[test]
+fn multi_agent_v2_rejects_retired_lifetime_quota_key() {
+    let err = toml::from_str::<FeaturesToml>(
+        r#"
+[multi_agent_v2]
+enabled = true
+max_total_spawns_per_root = 4
+"#,
+    )
+    .expect_err("retired lifetime-quota key must be rejected loudly");
+    assert!(
+        err.to_string().contains("multi_agent_v2"),
+        "parse error should point at the multi_agent_v2 table: {err}"
     );
 }
 

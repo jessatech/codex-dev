@@ -1756,12 +1756,6 @@
           "minimum": 1.0,
           "type": "integer"
         },
-        "max_total_spawns_per_root": {
-          "description": "Deprecated compatibility field. Its value is ignored; V2 spawn identities are unbounded.",
-          "format": "uint",
-          "minimum": 0.0,
-          "type": "integer"
-        },
         "max_wait_timeout_ms": {
           "format": "int64",
           "maximum": 3600000.0,
