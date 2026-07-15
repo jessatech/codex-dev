@@ -200,3 +200,52 @@ base. No external branch is fetched or applied.
 - Supersession: refines `docs/08_SWARM_PRODUCT_REQUIREMENTS.md` (baseline). Its #1 requirement
   ("per-agent model AND effort honored exactly, or the spawn fails loudly — never silently
   substitute") is the design north-star for C1/C5. Full traceability table to be produced before C5.
+
+---
+
+## Append-only record
+
+_This section is append-only: entries are added, never edited or removed. Established per Jess's
+2026-07-14 direction after the 2026-07-13 synchronization rewrote header material in place._
+
+### Correction — provenance of prior decisions (2026-07-14)
+
+Recorded per Jess's rulings, 2026-07-14:
+
+- **User-directed (stand as designed):** the MultiAgent V2 depth cap
+  (`features.multi_agent_v2.max_depth`, default **2**) and unlimited sequential spawn identities
+  were both directed by Jess — not agent-improvised.
+- **Agent decisions (now adjudicated):**
+  - The `max_total_spawns_per_root` compatibility field ("accepted but ignored", C5c) was an agent
+    decision made without a stamp. Ruling: a dead knob may not remain accepted-but-ignored — it must
+    be removed or restored as real enforcement. Jess recommends removal; Fable concurs (2026-07-14).
+    Removal lands as its own PR referencing this entry. Note: `MultiAgentV2ConfigToml` is
+    `deny_unknown_fields`, so removal is deliberately loud — configs still setting the key fail to
+    parse with an error naming it.
+  - The 2026-07-13 in-place rewrite of this file's header block (fork-base restructure, the
+    synchronization-size-exception section, the near-term context-handoff policy) was an agent
+    decision. The content stands as written, but the in-place edit set no precedent: from this entry
+    forward, historical corrections to PATCHES.md are append-only.
+- **Confirmed semantics (C2):** the resolved-route record warns on explicit-request/effective
+  mismatches while reporting the actual winning provenance. Confirmed by Jess, 2026-07-14.
+
+### Sync record — 2026-07-14 (openai/codex upstream)
+
+Supersedes the header's "Current fork base" line (retained above unedited, per append-only rule).
+
+- **New fork base:** `8604689ec5` ("Allow injecting the Codex Apps tools cache", #33113) —
+  34 upstream commits absorbed since `60b9b551c1` (#32875).
+- **Replayed fork commits:** `9fe9f58b27` (#1 bounded nesting), `6ef53835c7` (#2 proposal),
+  `514f8bb0f6` (overlap resolution), `38fa5204ac` (#3 shallow-policy cleanup). Zero manual
+  conflicts.
+- **Validation:** 48-agent commit review (33 dossiers, 14 adversarial deep-reads, synthesis);
+  focused fork surface 333/333; full workspace suite 12,137/12,139 — the 2 failures are
+  `codex-otel` OTLP-loopback tests proven sync-independent (crate and dependency closure untouched
+  by the sync); 7/7 fork invariants re-verified at file:line on the merged tree.
+- **Published:** force-with-lease to `origin/main` (`f1f45fe01e` → `38fa5204ac`), 2026-07-14.
+  Rollback ref: `refs/backup/pre-sync-8604689-2026-07-14`.
+- **Watch items from review:** #33076 `AgentRunner::start` spawns below the fork's gates (inert
+  in-tree today; gate-relocation into `ThreadManager::spawn_subagent` proposed, pending Jess's
+  stamp); upstream SQLite thread-history (#32896/#32923/#32928) overlaps planned C3 — reconcile
+  before C3 work begins; #33109 exposes a pre-existing unguarded paginated-parent fork path
+  (tracked separately).
